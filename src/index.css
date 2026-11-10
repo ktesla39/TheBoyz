@@ -1,0 +1,851 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --mc-bg: #080b11;
+  --mc-surface: #121622;
+  --mc-surface-hover: #181e2e;
+  --mc-border: #212738;
+  --mc-accent: #10b981;
+  --mc-accent-hover: #059669;
+  --mc-badge-bg: rgba(16, 185, 129, 0.15);
+  --mc-badge-text: #34d399;
+  --mc-glow-color: rgba(16, 185, 129, 0.25);
+}
+
+/* ==========================================================================
+   Authentic Minecraft High-Definition Pixel Cursors
+   Crisp pixel-art Diamond Sword (default) & Diamond Pickaxe (pointer)
+   ========================================================================== */
+
+* {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22' shape-rendering='crispEdges'><path d='M2,2 L8,2 L8,4 L10,4 L10,6 L12,6 L12,8 L10,8 L10,10 L8,10 L8,8 L6,8 L6,6 L4,6 L4,4 L2,4 Z' fill='%2338bdf8'/><path d='M3,3 L7,3 L7,4 L9,4 L9,6 L11,6 L11,7 L9,7 L9,9 L7,9 L7,7 L5,7 L5,5 L3,5 Z' fill='%23ffffff'/><path d='M10,10 L14,10 L14,12 L12,12 L12,14 L10,14 Z' fill='%230284c7'/><path d='M11,11 L13,11 L13,13 L11,13 Z' fill='%230f172a'/><path d='M12,14 L14,12 L16,14 L14,16 Z' fill='%23d97706'/><path d='M14,16 L17,19 L19,17 L16,14 Z' fill='%2378350f'/><path d='M18,18 L21,21 L19,21 L17,19 Z' fill='%23451a03'/><polygon points='1,1 9,1 9,3 11,3 11,5 13,5 13,9 11,9 11,11 9,11 9,13 5,13 5,11 3,11 3,9 1,9' stroke='%2306131f' stroke-width='1.2' fill='none'/></svg>") 1 1, default;
+}
+
+button,
+a,
+[role="button"],
+input[type="submit"],
+input[type="button"],
+input[type="checkbox"],
+select,
+.cursor-pointer {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' shape-rendering='crispEdges'><path d='M7,2 L16,2 L18,4 L20,7 L20,10 L18,10 L18,6 L14,4 L10,4 L6,8 L4,8 L4,5 L6,3 Z' fill='%2338bdf8' stroke='%2306131f' stroke-width='1'/><path d='M9,3 L15,3 L17,5 L17,7 L15,5 L11,5 L8,8 L6,8 L6,5 L8,3 Z' fill='%23ffffff'/><path d='M10,9 L12,7 L13,8 L11,10 Z' fill='%23f59e0b'/><path d='M11,10 L13,8 L20,15 L18,17 Z' fill='%2392400e'/><path d='M13,12 L15,10 L21,16 L19,18 Z' fill='%2378350f'/><path d='M19,18 L21,16 L23,18 L21,20 Z' fill='%23451a03'/></svg>") 3 3, pointer !important;
+}
+
+@layer base {
+  html {
+    font-size: 100%;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'VT323', 'Courier New', monospace;
+    font-size: 21px;
+    line-height: 1.35;
+    background-color: var(--mc-bg);
+    color: #e2e8f0;
+    overflow-x: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    /* Authentic Minecraft Stone UI Tile & Ambient Glow */
+    background-image:
+      radial-gradient(circle at 50% 0%, var(--mc-glow-color) 0%, transparent 65%),
+      linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+    background-size: 100% 100%, 32px 32px, 32px 32px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .font-display {
+    font-family: 'Pixelify Sans', 'Trebuchet MS', sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: 'VT323', 'Courier New', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.font-pixel {
+  font-family: 'Press Start 2P', 'Pixelify Sans', sans-serif;
+  letter-spacing: 0;
+  line-height: 1.65;
+}
+
+.font-display {
+  font-family: 'Pixelify Sans', 'Trebuchet MS', sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 1.05em;
+}
+
+.card-obsidian,
+[class*="rounded-xl"][class*="border"]:not(button):not(input):not(select),
+[class*="rounded-2xl"][class*="border"]:not(button):not(input):not(select) {
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.018) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.045) 3px 4px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, transparent 28%, rgba(0, 0, 0, 0.08) 100%);
+  background-size: 4px 4px, 4px 4px, 100% 100%;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.08),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.28);
+}
+
+/* ==========================================================================
+   Theme Ambience Engine (Themes Dramatically Transform the Entire Launcher!)
+   ========================================================================== */
+
+/* 1. Obsidian Dark */
+[data-theme="obsidian"] body {
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgba(168, 85, 247, 0.22) 0%, transparent 65%),
+    radial-gradient(ellipse at 85% 90%, rgba(16, 185, 129, 0.14) 0%, transparent 55%),
+    radial-gradient(circle at 10% 40%, rgba(147, 51, 234, 0.08) 0%, transparent 40%),
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+}
+
+/* 2. Emerald Grove */
+[data-theme="emerald"] body {
+  background-image:
+    radial-gradient(circle at 50% -15%, rgba(5, 150, 105, 0.3) 0%, transparent 70%),
+    radial-gradient(circle at 15% 85%, rgba(16, 185, 129, 0.2) 0%, transparent 60%),
+    radial-gradient(circle at 85% 30%, rgba(52, 211, 153, 0.12) 0%, transparent 50%),
+    linear-gradient(rgba(52, 211, 153, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(52, 211, 153, 0.03) 1px, transparent 1px);
+}
+
+/* 3. Glacial Diamond */
+[data-theme="glacial"] body {
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(0, 210, 255, 0.28) 0%, transparent 65%),
+    radial-gradient(circle at 90% 70%, rgba(56, 189, 248, 0.2) 0%, transparent 55%),
+    radial-gradient(circle at 10% 30%, rgba(14, 165, 233, 0.15) 0%, transparent 45%),
+    linear-gradient(rgba(125, 211, 252, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.03) 1px, transparent 1px);
+}
+
+/* 4. Nether Crimson */
+[data-theme="nether"] body {
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgba(245, 158, 11, 0.28) 0%, transparent 60%),
+    radial-gradient(ellipse at 20% 90%, rgba(220, 38, 38, 0.25) 0%, transparent 55%),
+    radial-gradient(circle at 80% 40%, rgba(239, 68, 68, 0.15) 0%, transparent 45%),
+    linear-gradient(rgba(248, 113, 113, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(248, 113, 113, 0.03) 1px, transparent 1px);
+}
+
+/* 5. Ender Void */
+[data-theme="ender"] body {
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(168, 85, 247, 0.35) 0%, transparent 65%),
+    radial-gradient(circle at 80% 80%, rgba(217, 70, 239, 0.25) 0%, transparent 55%),
+    radial-gradient(circle at 15% 35%, rgba(192, 132, 252, 0.15) 0%, transparent 45%),
+    linear-gradient(rgba(192, 132, 252, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(192, 132, 252, 0.03) 1px, transparent 1px);
+}
+
+/* 6. Redstone Core */
+[data-theme="redstone"] body {
+  background-image:
+    radial-gradient(ellipse at 50% -15%, rgba(239, 68, 68, 0.3) 0%, transparent 65%),
+    radial-gradient(circle at 15% 75%, rgba(220, 38, 38, 0.22) 0%, transparent 55%),
+    radial-gradient(circle at 85% 25%, rgba(248, 113, 113, 0.15) 0%, transparent 45%),
+    linear-gradient(rgba(239, 68, 68, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(239, 68, 68, 0.035) 1px, transparent 1px);
+}
+
+/* 7. Cyber Matrix */
+[data-theme="cyber"] body {
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(20, 184, 166, 0.3) 0%, transparent 65%),
+    radial-gradient(circle at 85% 85%, rgba(45, 212, 191, 0.2) 0%, transparent 50%),
+    linear-gradient(rgba(45, 212, 191, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 212, 191, 0.04) 1px, transparent 1px);
+  background-size: 100% 100%, 28px 28px, 28px 28px;
+}
+
+/* 8. Deepslate Classic */
+[data-theme="deepslate"] body {
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(6, 182, 212, 0.2) 0%, transparent 60%),
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+}
+
+/* 9. OLED Pure Black */
+[data-theme="oled"] body {
+  background-image: none !important;
+  background-color: #000000 !important;
+}
+
+/* ==========================================================================
+   Authentic Minecraft Texture Pack GUI Button Engine
+   Replicates the exact pixel-perfect bevels and active depression from Minecraft
+   ========================================================================== */
+
+/* Universal Minecraft Stone GUI Button */
+.btn-mc,
+.btn-minecraft-secondary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #2b303c;
+  background-image: linear-gradient(180deg, #373e4d 0%, #252a36 100%);
+  color: #e2e8f0;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #12151c;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.18),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.45);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.08s ease-out;
+  border-radius: 4px;
+}
+
+.btn-mc::after,
+.btn-minecraft-secondary::after,
+.btn-mc-green::after,
+.btn-mc-red::after,
+.btn-mc-diamond::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 1px;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.035) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.045) 3px 4px);
+  pointer-events: none;
+}
+
+.btn-mc > *,
+.btn-minecraft-secondary > *,
+.btn-mc-green > *,
+.btn-mc-red > *,
+.btn-mc-diamond > * {
+  position: relative;
+  z-index: 1;
+}
+
+.btn-mc:hover:not(:disabled),
+.btn-minecraft-secondary:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #444c5f 0%, #2f3645 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.3),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.btn-mc:active:not(:disabled),
+.btn-minecraft-secondary:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #20242e 0%, #2b303c 100%);
+  box-shadow:
+    inset 2px 2px 0px rgba(0, 0, 0, 0.65),
+    inset -2px -2px 0px rgba(255, 255, 255, 0.12);
+  transform: translate(1px, 1px);
+}
+
+/* Green Emerald / Grass Block Play Button & Primary Dynamic Button */
+.btn-mc-green,
+.btn-mc-primary,
+.btn-play-tactile,
+.btn-minecraft-play {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--mc-btn-primary, #2e7d32);
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-hover, #388e3c) 0%, var(--mc-btn-primary, #256b29) 100%);
+  color: #ffffff;
+  border-style: solid;
+  border-width: 2px;
+  border-color: var(--mc-btn-primary-border, #103814);
+  box-shadow:
+    inset 2px 2px 0px var(--mc-btn-primary-highlight, #70e050),
+    inset -2px -2px 0px var(--mc-btn-primary-shadow, #134217),
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.08s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+}
+
+.btn-mc-green:hover:not(:disabled),
+.btn-mc-primary:hover:not(:disabled),
+.btn-play-tactile:hover:not(:disabled),
+.btn-minecraft-play:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-highlight, #70e050) 0%, var(--mc-btn-primary-hover, #388e3c) 100%);
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.4),
+    inset -2px -2px 0px var(--mc-btn-primary-border, #103814),
+    0 4px 14px rgba(0, 0, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-mc-green:active:not(:disabled),
+.btn-mc-primary:active:not(:disabled),
+.btn-play-tactile:active:not(:disabled),
+.btn-minecraft-play:active:not(:disabled) {
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-active, #1b531f) 0%, var(--mc-btn-primary, #28732c) 100%);
+  box-shadow:
+    inset 2px 2px 0px var(--mc-btn-primary-border, #103814),
+    inset -2px -2px 0px var(--mc-btn-primary-highlight, #70e050);
+  transform: translate(1px, 2px);
+}
+
+
+/* Redstone / Danger Stop Button */
+.btn-mc-red,
+.btn-stop-tactile,
+.btn-minecraft-stop {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #b71c1c;
+  background-image: linear-gradient(180deg, #d32f2f 0%, #991b1b 100%);
+  color: #ffffff;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #450a0a;
+  box-shadow:
+    inset 2px 2px 0px #f87171,
+    inset -2px -2px 0px #5e0e0e,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 2px 2px rgba(0, 0, 0, 0.8);
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.08s ease;
+}
+
+.btn-mc-red:hover:not(:disabled),
+.btn-stop-tactile:hover:not(:disabled),
+.btn-minecraft-stop:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+  box-shadow:
+    inset 2px 2px 0px #fca5a5,
+    inset -2px -2px 0px #450a0a,
+    0 4px 14px rgba(220, 38, 38, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-mc-red:active:not(:disabled),
+.btn-stop-tactile:active:not(:disabled),
+.btn-minecraft-stop:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%);
+  box-shadow:
+    inset 2px 2px 0px #360707,
+    inset -2px -2px 0px #f87171;
+  transform: translate(1px, 2px);
+}
+
+/* Wood Planks Button */
+.btn-mc-wood {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #78350f;
+  background-image: linear-gradient(180deg, #92400e 0%, #6b2f0a 100%);
+  color: #fef3c7;
+  border: 2px solid #291003;
+  box-shadow:
+    inset 2px 2px 0px #d97706,
+    inset -2px -2px 0px #3f1906;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-mc-wood:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #b45309 0%, #78350f 100%);
+}
+
+.btn-mc-wood:active:not(:disabled) {
+  box-shadow:
+    inset 2px 2px 0px #291003,
+    inset -2px -2px 0px #d97706;
+  transform: translate(1px, 1px);
+}
+
+/* Amber / Blaze / CurseForge Category Button */
+.btn-mc-amber,
+.btn-mc-curseforge,
+.btn-tactile-amber {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #b45309;
+  background-image: linear-gradient(180deg, #d97706 0%, #92400e 100%);
+  color: #ffffff;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #451a03;
+  box-shadow:
+    inset 2px 2px 0px #fde68a,
+    inset -2px -2px 0px #78350f,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.08s ease-out;
+}
+
+.btn-mc-amber:hover:not(:disabled),
+.btn-mc-curseforge:hover:not(:disabled),
+.btn-tactile-amber:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
+  box-shadow:
+    inset 2px 2px 0px #fef08a,
+    inset -2px -2px 0px #451a03,
+    0 4px 14px rgba(217, 119, 6, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-mc-amber:active:not(:disabled),
+.btn-mc-curseforge:active:not(:disabled),
+.btn-tactile-amber:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #78350f 0%, #92400e 100%);
+  box-shadow:
+    inset 2px 2px 0px #451a03,
+    inset -2px -2px 0px #fde68a;
+  transform: translate(1px, 2px);
+}
+
+/* Diamond / Cyan / Modrinth Category Button */
+.btn-mc-diamond,
+.btn-mc-modrinth,
+.btn-tactile-cyan {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #0284c7;
+  background-image: linear-gradient(180deg, #0284c7 0%, #0369a1 100%);
+  color: #ffffff;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #082f49;
+  box-shadow:
+    inset 2px 2px 0px #7dd3fc,
+    inset -2px -2px 0px #075985,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.08s ease-out;
+}
+
+.btn-mc-diamond:hover:not(:disabled),
+.btn-mc-modrinth:hover:not(:disabled),
+.btn-tactile-cyan:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+  box-shadow:
+    inset 2px 2px 0px #bae6fd,
+    inset -2px -2px 0px #082f49,
+    0 4px 14px rgba(2, 132, 199, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-mc-diamond:active:not(:disabled),
+.btn-mc-modrinth:active:not(:disabled),
+.btn-tactile-cyan:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #075985 0%, #0369a1 100%);
+  box-shadow:
+    inset 2px 2px 0px #082f49,
+    inset -2px -2px 0px #7dd3fc;
+  transform: translate(1px, 2px);
+}
+
+/* Ender / Amethyst / Shaders Category Button */
+.btn-mc-purple {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #7e22ce;
+  background-image: linear-gradient(180deg, #9333ea 0%, #6b21a8 100%);
+  color: #ffffff;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #3b0764;
+  box-shadow:
+    inset 2px 2px 0px #d8b4fe,
+    inset -2px -2px 0px #581c87,
+    0 3px 8px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.08s ease-out;
+}
+
+.btn-mc-purple:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #a855f7 0%, #7e22ce 100%);
+  box-shadow:
+    inset 2px 2px 0px #e9d5ff,
+    inset -2px -2px 0px #3b0764,
+    0 4px 14px rgba(126, 34, 206, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-mc-purple:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #581c87 0%, #6b21a8 100%);
+  box-shadow:
+    inset 2px 2px 0px #3b0764,
+    inset -2px -2px 0px #d8b4fe;
+  transform: translate(1px, 2px);
+}
+
+.btn-tactile-dark {
+  background: #1c202a;
+  color: #e2e8f0;
+  font-weight: 600;
+  border-top: 1px solid #323746;
+  border-left: 1px solid #323746;
+  border-right: 1px solid #13161c;
+  border-bottom: 2px solid #0d0f14;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: all 0.08s ease-out;
+}
+
+.btn-tactile-dark:hover {
+  background: #252b38;
+  color: #ffffff;
+  border-top-color: #444c60;
+  border-left-color: #444c60;
+}
+
+.btn-tactile-dark:active {
+  transform: translate(1px, 1px);
+}
+
+/* ==========================================================================
+   Authentic Minecraft Texture Pack GUI Selector Engine
+   Every dropdown has the authentic tactile stone texture & highlight bevels!
+   ========================================================================== */
+select,
+.select-mc {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #2b303c;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>"),
+    linear-gradient(180deg, #373e4d 0%, #252a36 100%);
+  background-repeat: no-repeat, repeat;
+  background-position: right 10px center, 0 0;
+  background-size: 16px 16px, 100% 100%;
+  color: #f1f5f9;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #12151c;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.18),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.45),
+    0 2px 4px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 700;
+  border-radius: 4px;
+  padding-right: 34px !important;
+  cursor: pointer;
+  transition: all 0.08s ease-out;
+}
+
+select:hover,
+.select-mc:hover {
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>"),
+    linear-gradient(180deg, #444c5f 0%, #2f3645 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.3),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+select:focus,
+.select-mc:focus {
+  outline: none;
+  border-color: var(--mc-accent, #10b981);
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.3),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.55),
+    0 0 0 2px var(--mc-glow-color, rgba(16, 185, 129, 0.35));
+}
+
+select option {
+  background-color: #1a202c;
+  color: #f1f5f9;
+  font-family: 'VT323', monospace;
+  padding: 6px 12px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+textarea {
+  color: #f1f5f9;
+  background-color: #242832;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.025) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.08) 3px 4px),
+    linear-gradient(180deg, #303542 0%, #232732 100%);
+  border: 2px solid #11141b;
+  border-radius: 4px;
+  box-shadow:
+    inset 2px 2px 0 rgba(255,  255, 255, 0.1),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.45);
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 19px;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+  transition: border-color 100ms ease, box-shadow 100ms ease;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--mc-accent);
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.12),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.45),
+    0 0 0 2px var(--mc-glow-color);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9aa2b2;
+  opacity: 0.8;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--mc-accent);
+  image-rendering: pixelated;
+}
+
+/* Robust Anti-Text-Overflow & Line Clamp Engine */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Pixel-crisp texture rendering for Minecraft skins and icons */
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* Realistic Launcher Panel Elevation & Enhanced Obsidian Texture */
+.card-obsidian {
+  position: relative;
+  background-color: var(--mc-surface);
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.022) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.055) 3px 4px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, transparent 22%, rgba(0, 0, 0, 0.12) 100%),
+    radial-gradient(circle at 85% 15%, var(--mc-glow-color, rgba(16, 185, 129, 0.08)) 0%, transparent 40%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 5px),
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 4px 4px, 4px 4px, 100% 100%, 100% 100%, 8px 8px, 20px 20px, 20px 20px;
+  border: 2px solid var(--mc-border);
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.11),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.62),
+    0 4px 18px rgba(0, 0, 0, 0.55);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-obsidian:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.15),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.6),
+    0 6px 22px rgba(0, 0, 0, 0.65);
+}
+
+[data-color-scheme="light"] body {
+  color: #24231f;
+  background-color: var(--mc-bg);
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 65%),
+    linear-gradient(rgba(67, 63, 54, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(67, 63, 54, 0.045) 1px, transparent 1px);
+}
+
+[data-color-scheme="light"] #root,
+[data-color-scheme="light"] main,
+[data-color-scheme="light"] header,
+[data-color-scheme="light"] aside {
+  color: #24231f;
+}
+
+[data-color-scheme="light"] .text-white:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] .text-slate-100:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] .text-slate-200:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] .text-slate-300:not(.btn-mc):not(.btn-mc *) {
+  color: #292820 !important;
+}
+
+[data-color-scheme="light"] .text-slate-400,
+[data-color-scheme="light"] .text-slate-500,
+[data-color-scheme="light"] .text-slate-600 {
+  color: #575247 !important;
+}
+
+[data-color-scheme="light"] [class*="text-emerald-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-green-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-lime-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #166534 !important;
+}
+
+[data-color-scheme="light"] [class*="text-teal-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-cyan-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-sky-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #075985 !important;
+}
+
+[data-color-scheme="light"] [class*="text-blue-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-indigo-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #1e40af !important;
+}
+
+[data-color-scheme="light"] [class*="text-amber-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-yellow-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-orange-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #854d0e !important;
+}
+
+[data-color-scheme="light"] [class*="text-red-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-rose-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #991b1b !important;
+}
+
+[data-color-scheme="light"] [class*="text-purple-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-violet-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-fuchsia-"]:not(.btn-mc):not(.btn-mc *),
+[data-color-scheme="light"] [class*="text-pink-"]:not(.btn-mc):not(.btn-mc *) {
+  color: #6b21a8 !important;
+}
+
+[data-color-scheme="light"] .card-obsidian {
+  border-color: #bcb7aa;
+  background-color: var(--mc-surface);
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.24) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(59, 53, 42, 0.035) 3px 4px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0%, transparent 25%, rgba(92, 83, 64, 0.045) 100%),
+    repeating-linear-gradient(135deg, rgba(92, 83, 64, 0.025) 0 1px, transparent 1px 5px);
+  box-shadow:
+    inset 2px 2px 0 rgba(255, 255, 255, 0.85),
+    inset -2px -2px 0 rgba(92, 83, 64, 0.12),
+    0 4px 14px rgba(58, 52, 41, 0.16);
+}
+
+[data-color-scheme="light"] [class*="bg-black/"],
+[data-color-scheme="light"] [class*="bg-[#"] {
+  background-color: rgba(96, 91, 78, 0.09) !important;
+}
+
+[data-color-scheme="light"] input:not([type="range"]):not([type="color"]),
+[data-color-scheme="light"] textarea,
+[data-color-scheme="light"] select {
+  color: #292820 !important;
+  background-color: #f7f5ef !important;
+  border-color: #bcb7aa !important;
+}
+
+[data-color-scheme="light"] .btn-mc,
+[data-color-scheme="light"] .btn-mc * {
+  color: #fff !important;
+}
+
+/* Older Hardware / Low-Spec Optimization Engine */
+.low-spec-mode {
+  --mc-surface: #0e1118;
+  --mc-border: #1a202c;
+}
+
+.low-spec-mode * {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.low-spec-mode body {
+  background-image: none !important;
+}
+
+/* Custom Launcher Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--mc-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #273145;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mc-accent);
+}

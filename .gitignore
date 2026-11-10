@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+target/
+coverage/
+.DS_Store
+*.log
+*.key
+*.sig
+.tauri/
+.env*
+!.env.example
