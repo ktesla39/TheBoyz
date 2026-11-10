@@ -141,8 +141,8 @@ The Rust backend exposes 18 commands via Tauri's IPC bridge:
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/ktesla39/the-boyz.git
-cd the-boyz
+git clone https://github.com/ktesla39/TheBoyz.git
+cd TheBoyz
 
 # Install frontend dependencies
 npm install
@@ -176,7 +176,7 @@ npm run dev
 npm run build
 ```
 
-Set `VITE_GITHUB_REPOSITORY=ktesla39/the-boyz` in the root `.env` to enable the website's GitHub Releases download links.
+Set `VITE_GITHUB_REPOSITORY=ktesla39/the-boyz` in the root `.env` to enable the website's download button. It looks up the latest GitHub release and links directly to its Windows `.exe` installer, so clicking the button downloads the installer instead of opening the GitHub release page.
 
 ### Signed automatic updates and GitHub Releases
 The launcher checks the latest GitHub Release in the desktop app and offers the update before installing it. Releases are built for Windows by `.github/workflows/release.yml`; push a version tag such as `v1.0.1` to publish a signed NSIS installer and the updater's `latest.json`.
@@ -190,10 +190,12 @@ npm run tauri -- signer generate --write-keys "$env:USERPROFILE\.tauri\the-boys-
 
 Add the generated **public** key to repository Settings → Secrets and variables → Actions → Variables as `TAURI_UPDATER_PUBLIC_KEY`. Add the private-key file contents and the password chosen during generation as Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never commit the private key or put it in `.env`, frontend variables, or website code. The release workflow validates these values and writes the tagged version and signed updater endpoint into the build configuration before packaging.
 
-The website's download link uses the public `VITE_GITHUB_REPOSITORY` variable. The root `.env.example` contains only public/local-development settings and does not contain signing credentials.
+The website's download lookup uses the public `VITE_GITHUB_REPOSITORY` variable and GitHub's latest-release API. The root `.env.example` contains only public/local-development settings and does not contain signing credentials.
 
 ---
 
 ## 📜 License
 Built with passion by **The Boys Development Team**.
 Licensed under the [MIT License](LICENSE).
+#   T h e B o y z  
+ 
