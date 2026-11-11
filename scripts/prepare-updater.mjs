@@ -45,22 +45,25 @@ config.plugins.updater = {
 };
 
 const cargoManifest = await readFile(cargoManifestPath, 'utf8');
-const updatedCargoManifest = cargoManifest.replace(
-  /^(\[package\][\s\S]*?^version\s*=\s*")[^"]+(")/m,
-  (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
-);
-if (updatedCargoManifest === cargoManifest) {
+const cargoManifestVersionPattern = /^(\[package\][\s\S]*?^version\s*=\s*")[^"]+(")/m;
+if (!cargoManifestVersionPattern.test(cargoManifest)) {
   throw new Error('Could not locate the Rust package version in src-tauri/Cargo.toml.');
 }
-
-const cargoLock = await readFile(cargoLockPath, 'utf8');
-const updatedCargoLock = cargoLock.replace(
-  /^(\[\[package\]\]\r?\nname = "the-boys-launcher"\r?\nversion = ")[^"]+(")/m,
+const updatedCargoManifest = cargoManifest.replace(
+  cargoManifestVersionPattern,
   (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
 );
-if (updatedCargoLock === cargoLock) {
+
+const cargoLock = await readFile(cargoLockPath, 'utf8');
+const cargoLockVersionPattern =
+  /^(\[\[package\]\]\r?\nname = "the-boys-launcher"\r?\nversion = ")[^"]+(")/m;
+if (!cargoLockVersionPattern.test(cargoLock)) {
   throw new Error('Could not locate the launcher package version in src-tauri/Cargo.lock.');
 }
+const updatedCargoLock = cargoLock.replace(
+  cargoLockVersionPattern,
+  (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
+);
 
 const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
 const packageLock = JSON.parse(await readFile(packageLockPath, 'utf8'));
