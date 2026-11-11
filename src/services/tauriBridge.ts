@@ -25,6 +25,19 @@ export interface TauriHardwareInfo {
   recommended_ram_mb: number;
 }
 
+export interface TauriGraphicsApiVersions {
+  opengl: string | null;
+  opengl_error: string | null;
+  vulkan: string | null;
+  vulkan_error: string | null;
+  directx12: string | null;
+  directx12_error: string | null;
+}
+
+export async function invokeDetectGraphicsApiVersions(): Promise<TauriGraphicsApiVersions> {
+  return invokeTauri<TauriGraphicsApiVersions>('detect_graphics_api_versions');
+}
+
 export interface TauriJavaInstallation {
   path: string;
   major_version: number;
@@ -216,21 +229,33 @@ export async function invokeSaveSkinFile(username: string, base64Png: string): P
   return invokeTauri('save_skin_file', { username, base64Png });
 }
 
-export async function invokeListInstanceMods(instanceId: string): Promise<Array<{
+export async function invokeListInstanceMods(
+  instanceId: string,
+  customGameDir?: string,
+): Promise<Array<{
   file_name: string;
   name: string;
   enabled: boolean;
   size_bytes: number;
 }>> {
-  return invokeTauri('list_instance_mods', { instanceId });
+  return invokeTauri('list_instance_mods', { instanceId, customGameDir });
 }
 
-export async function invokeToggleModFile(instanceId: string, fileName: string, enable: boolean): Promise<string> {
-  return invokeTauri('toggle_mod_file', { instanceId, fileName, enable });
+export async function invokeToggleModFile(
+  instanceId: string,
+  fileName: string,
+  enable: boolean,
+  customGameDir?: string,
+): Promise<string> {
+  return invokeTauri('toggle_mod_file', { instanceId, fileName, enable, customGameDir });
 }
 
-export async function invokeDeleteModFile(instanceId: string, fileName: string): Promise<boolean> {
-  return invokeTauri('delete_mod_file', { instanceId, fileName });
+export async function invokeDeleteModFile(
+  instanceId: string,
+  fileName: string,
+  customGameDir?: string,
+): Promise<boolean> {
+  return invokeTauri('delete_mod_file', { instanceId, fileName, customGameDir });
 }
 
 export interface TauriInstallAddonRequest {
@@ -243,6 +268,7 @@ export interface TauriInstallAddonRequest {
   loader?: string;
   direct_download_url?: string;
   file_name?: string;
+  custom_game_dir?: string;
 }
 
 export interface TauriInstallAddonResult {
@@ -263,6 +289,13 @@ export interface TauriInstanceAddonItem {
   path: string;
 }
 
+export interface TauriImportedAddonFile {
+  file_name: string;
+  name: string;
+  addon_type: 'mod' | 'resourcepack';
+  size_bytes: number;
+}
+
 export interface TauriLauncherUpdateInfo {
   has_update: boolean;
   current_version: string;
@@ -279,35 +312,61 @@ export async function invokeInstallInstanceAddon(
   return invokeTauri<TauriInstallAddonResult>('install_instance_addon', { request });
 }
 
+export async function invokeInstallInstanceModpack(
+  request: TauriInstallAddonRequest
+): Promise<TauriInstallAddonResult> {
+  return invokeTauri<TauriInstallAddonResult>('install_instance_modpack', { request });
+}
+
 export async function invokeListInstanceAddons(
-  instanceId: string
+  instanceId: string,
+  customGameDir?: string,
 ): Promise<TauriInstanceAddonItem[]> {
-  return invokeTauri<TauriInstanceAddonItem[]>('list_instance_addons', { instanceId });
+  return invokeTauri<TauriInstanceAddonItem[]>('list_instance_addons', {
+    instanceId,
+    customGameDir,
+  });
 }
 
 export async function invokeToggleInstanceAddon(
   instanceId: string,
   addonType: string,
   fileName: string,
-  enable: boolean
+  enable: boolean,
+  customGameDir?: string,
 ): Promise<string> {
   return invokeTauri<string>('toggle_instance_addon', {
     instanceId,
     addonType,
     fileName,
     enable,
+    customGameDir,
   });
 }
 
 export async function invokeDeleteInstanceAddon(
   instanceId: string,
   addonType: string,
-  fileName: string
+  fileName: string,
+  customGameDir?: string,
 ): Promise<boolean> {
   return invokeTauri<boolean>('delete_instance_addon', {
     instanceId,
     addonType,
     fileName,
+    customGameDir,
+  });
+}
+
+export async function invokeImportLocalAddonFiles(
+  instanceId: string,
+  customGameDir: string | undefined,
+  paths: string[],
+): Promise<TauriImportedAddonFile[]> {
+  return invokeTauri<TauriImportedAddonFile[]>('import_local_addon_files', {
+    instanceId,
+    customGameDir,
+    paths,
   });
 }
 

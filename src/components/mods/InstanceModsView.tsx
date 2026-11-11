@@ -9,6 +9,13 @@ import {
 } from 'lucide-react';
 import { MinecraftInstance, InstalledMod } from '../../types/instance';
 import { EnderEyeIcon, DiamondSwordIcon } from '../icons/MinecraftIcons';
+import { open } from '@tauri-apps/plugin-dialog';
+import {
+  invokeDeleteModFile,
+  invokeImportLocalAddonFiles,
+  invokeToggleModFile,
+  isTauriEnvironment,
+} from '../../services/tauriBridge';
 
 interface InstanceModsViewProps {
   activeInstance: MinecraftInstance | null;
@@ -20,6 +27,7 @@ export const InstanceModsView: React.FC<InstanceModsViewProps> = ({
   onUpdateMods,
 }) => {
   const [search, setSearch] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
 
   if (!activeInstance) {
     return (
@@ -31,47 +39,95 @@ export const InstanceModsView: React.FC<InstanceModsViewProps> = ({
 
   const mods = activeInstance.mods;
 
-  const handleToggleMod = (modId: string) => {
-    const updated = mods.map((m) =>
-      m.id === modId ? { ...m, enabled: !m.enabled } : m
-    );
-    onUpdateMods(activeInstance.id, updated);
-  };
-
-  const handleDeleteMod = (modId: string) => {
-    const updated = mods.filter((m) => m.id !== modId);
-    onUpdateMods(activeInstance.id, updated);
-  };
-
-  const handleToggleAll = (enabledState: boolean) => {
-    const updated = mods.map((m) => ({ ...m, enabled: enabledState }));
-    onUpdateMods(activeInstance.id, updated);
-  };
-
-  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const newMods: InstalledMod[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.name.endsWith('.jar') || file.name.endsWith('.jar.disabled')) {
-        const cleanName = file.name.replace(/\.jar(\.disabled)?$/, '');
-        newMods.push({
-          id: `local_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          name: cleanName,
-          filename: file.name,
-          version: '1.0.0',
-          enabled: !file.name.endsWith('.disabled'),
-          author: 'Local File',
-          description: 'Manually imported mod JAR file',
-          source: 'local',
-        });
-      }
+  const handleToggleMod = async (modId: string) => {
+    const mod = mods.find((item) => item.id === modId);
+    if (!mod) return;
+    const enabled = !mod.enabled;
+    try {
+      const actualEnabled = !mod.filename.toLowerCase().endsWith('.disabled');
+      const filename = isTauriEnvironment() && actualEnabled !== enabled
+        ? await invokeToggleModFile(
+            activeInstance.id,
+            mod.filename,
+            enabled,
+            activeInstance.customGameDir,
+          )
+        : mod.filename;
+      onUpdateMods(
+        activeInstance.id,
+        mods.map((item) => item.id === modId ? { ...item, enabled, filename } : item),
+      );
+    } catch (reason) {
+      setImportError(`Could not toggle mod: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
+  };
 
-    if (newMods.length > 0) {
-      onUpdateMods(activeInstance.id, [...mods, ...newMods]);
+  const handleDeleteMod = async (modId: string) => {
+    const mod = mods.find((item) => item.id === modId);
+    if (!mod) return;
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteModFile(activeInstance.id, mod.filename, activeInstance.customGameDir);
+      }
+      onUpdateMods(activeInstance.id, mods.filter((item) => item.id !== modId));
+    } catch (reason) {
+      setImportError(`Could not delete mod: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
+  };
+
+  const handleToggleAll = async (enabledState: boolean) => {
+    try {
+      const updated: InstalledMod[] = [];
+      for (const mod of mods) {
+        const actualEnabled = !mod.filename.toLowerCase().endsWith('.disabled');
+        const filename = isTauriEnvironment() && actualEnabled !== enabledState
+          ? await invokeToggleModFile(
+              activeInstance.id,
+              mod.filename,
+              enabledState,
+              activeInstance.customGameDir,
+            )
+          : mod.filename;
+        updated.push({ ...mod, enabled: enabledState, filename });
+        onUpdateMods(activeInstance.id, [...updated, ...mods.slice(updated.length)]);
+      }
+      onUpdateMods(activeInstance.id, updated);
+    } catch (reason) {
+      setImportError(`Could not update mods: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
+  };
+
+  const handleFileImport = async () => {
+    setImportError(null);
+    try {
+      const selected = await open({
+        multiple: true,
+        title: 'Select mod JAR files',
+        filters: [{ name: 'Minecraft mods', extensions: ['jar'] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const imported = await invokeImportLocalAddonFiles(
+        activeInstance.id,
+        activeInstance.customGameDir,
+        paths,
+      );
+      const newMods: InstalledMod[] = imported.map((file, index) => ({
+        id: `local_${Date.now()}_${index}`,
+        name: file.name,
+        filename: file.file_name,
+        version: 'Local file',
+        enabled: true,
+        author: 'Local File',
+        description: 'Manually imported mod JAR file',
+        sizeBytes: file.size_bytes,
+        source: 'local',
+      }));
+      if (newMods.length > 0) {
+        onUpdateMods(activeInstance.id, [...mods, ...newMods]);
+      }
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
@@ -95,23 +151,20 @@ export const InstanceModsView: React.FC<InstanceModsViewProps> = ({
             Installed Mods — {activeInstance.name}
           </h2>
           <p className="text-xs text-slate-400 mt-1 font-mono">
-            Location: <code>.minecraft/instances/{activeInstance.id}/mods</code>
+            Location: <code>{activeInstance.customGameDir || `.minecraft/instances/${activeInstance.id}`}/mods</code>
           </p>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
-          <label className="btn-tactile-dark flex items-center gap-2 px-3 py-2 text-slate-200 text-xs font-bold rounded-lg cursor-pointer font-display">
+          <button
+            type="button"
+            onClick={() => void handleFileImport()}
+            className="btn-tactile-dark flex items-center gap-2 px-3 py-2 text-slate-200 text-xs font-bold rounded-lg cursor-pointer font-display"
+          >
             <Upload className="w-3.5 h-3.5 text-emerald-400" />
             <span>Import .JAR</span>
-            <input
-              type="file"
-              multiple
-              accept=".jar,.disabled"
-              onChange={handleFileImport}
-              className="hidden"
-            />
-          </label>
+          </button>
 
           <button
             onClick={() => handleToggleAll(true)}
@@ -127,6 +180,12 @@ export const InstanceModsView: React.FC<InstanceModsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {importError && (
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          {importError}
+        </div>
+      )}
 
       {/* Dependency Warning */}
       {missingFabricApiWarning && (

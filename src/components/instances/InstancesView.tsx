@@ -109,7 +109,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
             onClick={() => void handleImportInstance()}
             disabled={isImporting}
             className="btn-mc flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display disabled:opacity-50"
-            title="Copy mods, saves, configurations, and game options from SKLauncher or another launcher"
+            title="Copy mods, saves, configurations, and game options from SKLauncher, HMCL, or another launcher"
           >
             {isImporting ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
             <span>{isImporting ? 'Importing…' : 'Import Instance'}</span>

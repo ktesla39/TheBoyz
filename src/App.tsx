@@ -1,20 +1,21 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
-import { HomeView } from './components/home/HomeView';
-import { InstancesView } from './components/instances/InstancesView';
-import { VersionsView } from './components/versions/VersionsView';
-import { AddonsView } from './components/addons/AddonsView';
-import { GraphicsView } from './components/graphics/GraphicsView';
-import { JavaConfigView } from './components/java/JavaConfigView';
-import { DownloadsView } from './components/downloads/DownloadsView';
-import { AccountsView } from './components/accounts/AccountsView';
-import { SettingsView } from './components/settings/SettingsView';
-import { LiveConsoleModal } from './components/console/LiveConsoleModal';
-import { InstanceDetailView } from './components/instances/InstanceDetailView';
-import { ServersView } from './components/servers/ServersView';
+const HomeView = lazy(() => import('./components/home/HomeView').then((module) => ({ default: module.HomeView })));
+const InstancesView = lazy(() => import('./components/instances/InstancesView').then((module) => ({ default: module.InstancesView })));
+const VersionsView = lazy(() => import('./components/versions/VersionsView').then((module) => ({ default: module.VersionsView })));
+const AddonsView = lazy(() => import('./components/addons/AddonsView').then((module) => ({ default: module.AddonsView })));
+const GraphicsView = lazy(() => import('./components/graphics/GraphicsView').then((module) => ({ default: module.GraphicsView })));
+const JavaConfigView = lazy(() => import('./components/java/JavaConfigView').then((module) => ({ default: module.JavaConfigView })));
+const DownloadsView = lazy(() => import('./components/downloads/DownloadsView').then((module) => ({ default: module.DownloadsView })));
+const AccountsView = lazy(() => import('./components/accounts/AccountsView').then((module) => ({ default: module.AccountsView })));
+const SettingsView = lazy(() => import('./components/settings/SettingsView').then((module) => ({ default: module.SettingsView })));
+const LiveConsoleModal = lazy(() => import('./components/console/LiveConsoleModal').then((module) => ({ default: module.LiveConsoleModal })));
+const InstanceDetailView = lazy(() => import('./components/instances/InstanceDetailView').then((module) => ({ default: module.InstanceDetailView })));
+const ServersView = lazy(() => import('./components/servers/ServersView').then((module) => ({ default: module.ServersView })));
+const SkinManagerModal = lazy(() => import('./components/accounts/SkinManagerModal').then((module) => ({ default: module.SkinManagerModal })));
 
 import {
   loadSavedInstances,
@@ -62,7 +63,6 @@ import {
   LauncherProgress,
 } from './services/tauriBridge';
 import { applyLauncherTheme } from './services/themeService';
-import { SkinManagerModal } from './components/accounts/SkinManagerModal';
 import { AddOfflineAccountModal } from './components/accounts/AddOfflineAccountModal';
 import { MicrosoftLoginModal } from './components/accounts/MicrosoftLoginModal';
 import { FirstRunAccountChoiceModal } from './components/accounts/FirstRunAccountChoiceModal';
@@ -130,34 +130,55 @@ export default function App() {
   const lastProgressRenderAtRef = useRef(0);
   const lastProgressConsoleAtRef = useRef(0);
 
-  const refreshRuntimeInfo = useCallback(async () => {
+  const refreshRuntimeInfo = useCallback(async (includeHardware = true, includeJava = true) => {
     if (!isTauriEnvironment()) return;
 
-    const [hardwareResult, javaResult] = await Promise.allSettled([
-      invokeGetSystemHardware(),
-      invokeDetectJava(),
+    const [hardwareResult, javaResult] = await Promise.all([
+      includeHardware ? Promise.resolve(invokeGetSystemHardware()).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      ) : Promise.resolve(null),
+      includeJava ? Promise.resolve(invokeDetectJava()).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      ) : Promise.resolve(null),
     ]);
     const errors: string[] = [];
 
-    if (hardwareResult.status === 'fulfilled') {
-      setHardwareInfo(hardwareResult.value);
-    } else {
-      setHardwareInfo(null);
-      errors.push(`Hardware detection: ${hardwareResult.reason instanceof Error ? hardwareResult.reason.message : String(hardwareResult.reason)}`);
+    if (hardwareResult) {
+      if (hardwareResult.status === 'fulfilled') {
+        setHardwareInfo(hardwareResult.value);
+      } else {
+        setHardwareInfo(null);
+        errors.push(`Hardware detection: ${hardwareResult.reason instanceof Error ? hardwareResult.reason.message : String(hardwareResult.reason)}`);
+      }
     }
 
-    if (javaResult.status === 'fulfilled') {
-      setJavaInstallations(javaResult.value);
-    } else {
-      setJavaInstallations([]);
-      errors.push(`Java detection: ${javaResult.reason instanceof Error ? javaResult.reason.message : String(javaResult.reason)}`);
+    if (javaResult) {
+      if (javaResult.status === 'fulfilled') {
+        setJavaInstallations(javaResult.value);
+      } else {
+        setJavaInstallations([]);
+        errors.push(`Java detection: ${javaResult.reason instanceof Error ? javaResult.reason.message : String(javaResult.reason)}`);
+      }
     }
 
-    setRuntimeError(errors.length ? errors.join(' ') : null);
+    if (errors.length || (includeHardware && includeJava)) {
+      setRuntimeError(errors.length ? errors.join(' ') : null);
+    }
   }, []);
 
   useEffect(() => {
-    void refreshRuntimeInfo();
+    const hardwareTimer = window.setTimeout(() => {
+      void refreshRuntimeInfo(true, false);
+    }, 100);
+    const javaTimer = window.setTimeout(() => {
+      void refreshRuntimeInfo(false, true);
+    }, 1800);
+    return () => {
+      window.clearTimeout(hardwareTimer);
+      window.clearTimeout(javaTimer);
+    };
   }, [refreshRuntimeInfo]);
 
   useEffect(() => {
@@ -793,6 +814,7 @@ export default function App() {
 
         {/* Viewport Content */}
         <main className="launcher-content flex-1 overflow-y-auto">
+          <Suspense fallback={<div className="p-8 text-sm text-slate-400">Loading launcher view…</div>}>
           {currentTab === 'home' && (
             <HomeView
               activeInstance={activeInstance}
@@ -859,6 +881,7 @@ export default function App() {
               activeInstance={activeInstance}
               instances={instances}
               onUpdateInstance={handleUpdateInstance}
+              onAddInstance={handleAddInstance}
               onAddTask={(task) => setTasks((prev) => [task, ...prev])}
               onOpenCreateInstance={() => setIsCreateModalOpen(true)}
             />
@@ -939,40 +962,49 @@ export default function App() {
               onUpdateSettings={setSettings}
             />
           )}
+          </Suspense>
         </main>
       </div>
 
       {/* Live Console & Crash Diagnostic Modal */}
-      <LiveConsoleModal
-        isOpen={isConsoleOpen}
-        onClose={() => setIsConsoleOpen(false)}
-        logs={logs}
-        isGameRunning={isGameRunning}
-        isLaunching={isLaunching}
-        launchProgress={launchProgress}
-        launchElapsedMs={launchElapsedMs}
-        onStopGame={handleStopGame}
-        onClearLogs={() => setLogs([])}
-      />
+      {isConsoleOpen && (
+        <Suspense fallback={null}>
+          <LiveConsoleModal
+            isOpen={isConsoleOpen}
+            onClose={() => setIsConsoleOpen(false)}
+            logs={logs}
+            isGameRunning={isGameRunning}
+            isLaunching={isLaunching}
+            launchProgress={launchProgress}
+            launchElapsedMs={launchElapsedMs}
+            onStopGame={handleStopGame}
+            onClearLogs={() => setLogs([])}
+          />
+        </Suspense>
+      )}
 
       {/* Global Player Skin & Cape Studio Modal */}
       {activeAccount && (
-        <SkinManagerModal
-          isOpen={isSkinManagerOpen}
-          onClose={() => setIsSkinManagerOpen(false)}
-          account={activeAccount}
-          onUpdateAccountSkin={(updated) => {
-            const updatedAcc: LauncherAccount = {
-              ...activeAccount,
-              skinUrl: updated.skinUrl,
-              skinProvider: updated.skinProvider,
-              model: updated.model,
-              capeUrl: updated.capeUrl,
-              capeName: updated.capeName,
-            };
-            handleUpdateAccount(updatedAcc);
-          }}
-        />
+        isSkinManagerOpen && (
+          <Suspense fallback={null}>
+            <SkinManagerModal
+              isOpen={isSkinManagerOpen}
+              onClose={() => setIsSkinManagerOpen(false)}
+              account={activeAccount}
+              onUpdateAccountSkin={(updated) => {
+                const updatedAcc: LauncherAccount = {
+                  ...activeAccount,
+                  skinUrl: updated.skinUrl,
+                  skinProvider: updated.skinProvider,
+                  model: updated.model,
+                  capeUrl: updated.capeUrl,
+                  capeName: updated.capeName,
+                };
+                handleUpdateAccount(updatedAcc);
+              }}
+            />
+          </Suspense>
+        )
       )}
 
       {/* Create Instance Modal */}

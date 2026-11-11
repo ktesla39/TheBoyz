@@ -35,6 +35,7 @@ export function UpdatePrompt() {
   const checkForUpdates = useCallback(async () => {
     setNotice(null);
     let foundUpdate = false;
+    let signedUpdaterError: unknown;
 
     // 1. Try Tauri updater plugin first
     try {
@@ -43,8 +44,8 @@ export function UpdatePrompt() {
         setNotice({ kind: 'available', update });
         foundUpdate = true;
       }
-    } catch {
-      // Falls back to direct GitHub release check below
+    } catch (reason) {
+      signedUpdaterError = reason;
     }
 
     // 2. If no signed plugin update, check GitHub Releases directly
@@ -55,8 +56,19 @@ export function UpdatePrompt() {
           setNotice({ kind: 'github_available', info: ghInfo });
         }
       } catch (reason) {
-        // Silent in dev unless an update check error is explicitly thrown
         console.warn('Update check status:', reason);
+        const signedError = signedUpdaterError instanceof Error
+          ? signedUpdaterError.message
+          : signedUpdaterError === undefined
+            ? undefined
+            : String(signedUpdaterError);
+        const githubError = reason instanceof Error ? reason.message : String(reason);
+        setNotice({
+          kind: 'error',
+          message: signedError
+            ? `Signed updater check failed: ${signedError}. GitHub release check failed: ${githubError}`
+            : `GitHub release check failed: ${githubError}`,
+        });
       }
     }
   }, []);

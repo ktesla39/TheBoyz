@@ -3,11 +3,18 @@ import {
   CheckCircle,
   Info,
   Layers,
+  LoaderCircle,
+  RefreshCw,
   Sparkles,
 } from 'lucide-react';
 import { detectSystemHardware, getGraphicsApiReport } from '../../services/hardwareService';
 import { SystemHardwareInfo } from '../../types/launcher';
 import { MinecraftInstance, GraphicsApiType } from '../../types/instance';
+import {
+  invokeDetectGraphicsApiVersions,
+  isTauriEnvironment,
+  TauriGraphicsApiVersions,
+} from '../../services/tauriBridge';
 import {
   OpenGlApiIcon,
   VulkanApiIcon,
@@ -26,6 +33,9 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
   onUpdateGraphicsApi,
 }) => {
   const [hardware, setHardware] = useState<SystemHardwareInfo | null>(null);
+  const [apiVersions, setApiVersions] = useState<TauriGraphicsApiVersions | null>(null);
+  const [isScanningApis, setIsScanningApis] = useState(false);
+  const [apiScanError, setApiScanError] = useState<string | null>(null);
 
   useEffect(() => {
     setHardware(detectSystemHardware());
@@ -35,6 +45,21 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
 
   const currentApi = activeInstance?.graphicsApi || 'opengl';
   const report = getGraphicsApiReport(currentApi, hardware);
+  const scanGraphicsApis = async () => {
+    if (!isTauriEnvironment()) {
+      setApiScanError('Graphics API version scanning is available in the desktop launcher.');
+      return;
+    }
+    setIsScanningApis(true);
+    setApiScanError(null);
+    try {
+      setApiVersions(await invokeDetectGraphicsApiVersions());
+    } catch (reason) {
+      setApiScanError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setIsScanningApis(false);
+    }
+  };
 
   const apis: Array<{
     id: GraphicsApiType;
@@ -93,10 +118,21 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
 
       {/* GPU Hardware Detection Card */}
       <div className="card-obsidian p-6 rounded-2xl space-y-4">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider font-display flex items-center gap-2">
-          <GpuCardIcon className="w-4 h-4 text-emerald-400" />
-          Detected System Hardware
-        </h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider font-display flex items-center gap-2">
+            <GpuCardIcon className="w-4 h-4 text-emerald-400" />
+            Detected System Hardware
+          </h3>
+          <button
+            type="button"
+            onClick={() => void scanGraphicsApis()}
+            disabled={isScanningApis}
+            className="btn-mc flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-slate-200 disabled:opacity-50"
+          >
+            {isScanningApis ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {isScanningApis ? 'Scanning...' : apiVersions ? 'Scan again' : 'Scan API versions'}
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="p-4 rounded-xl bg-black/40 border border-white/5">
@@ -121,22 +157,23 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
             <div className="text-[10px] text-slate-400 uppercase font-semibold font-display">Driver API Support</div>
             <div className="flex items-center gap-3 mt-2 text-xs font-mono">
               <span className="flex items-center gap-1 text-emerald-400 font-bold">
-                {hardware.supportedApis.opengl ? (
+                {apiVersions?.opengl || hardware.supportedApis.opengl ? (
                   <CheckCircle className="w-3.5 h-3.5" />
                 ) : (
                   <Info className="w-3.5 h-3.5" />
                 )}
-                {hardware.supportedApis.opengl ? 'WebGL detected' : 'WebGL unavailable'}
+                {apiVersions?.opengl ?? (apiVersions ? apiVersions.opengl_error : hardware.supportedApis.opengl ? 'WebGL detected' : 'WebGL unavailable')}
               </span>
-              <span className={`flex items-center gap-1 font-bold ${hardware.supportedApis.vulkan === true ? 'text-emerald-400' : 'text-slate-500'}`}>
-                {hardware.supportedApis.vulkan ? <CheckCircle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
-                {hardware.supportedApis.vulkan === null ? 'Vulkan not queried' : 'Vulkan 1.2+'}
+              <span className={`flex items-center gap-1 font-bold ${apiVersions?.vulkan || hardware.supportedApis.vulkan === true ? 'text-emerald-400' : 'text-slate-500'}`}>
+                {apiVersions?.vulkan || hardware.supportedApis.vulkan ? <CheckCircle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                {apiVersions?.vulkan ?? (apiVersions ? apiVersions.vulkan_error : 'Vulkan not queried')}
               </span>
-              <span className={`flex items-center gap-1 font-bold ${hardware.supportedApis.directx12 === true ? 'text-cyan-400' : 'text-slate-500'}`}>
-                {hardware.supportedApis.directx12 ? <CheckCircle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
-                {hardware.supportedApis.directx12 === null ? 'DX12 not queried' : 'DX12'}
+              <span className={`flex items-center gap-1 font-bold ${apiVersions?.directx12 || hardware.supportedApis.directx12 === true ? 'text-cyan-400' : 'text-slate-500'}`}>
+                {apiVersions?.directx12 || hardware.supportedApis.directx12 ? <CheckCircle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                {apiVersions?.directx12 ?? (apiVersions ? apiVersions.directx12_error : 'DX12 not queried')}
               </span>
             </div>
+            {apiScanError && <p role="alert" className="text-xs text-red-300">{apiScanError}</p>}
           </div>
         </div>
       </div>

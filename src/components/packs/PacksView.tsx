@@ -15,13 +15,18 @@ import {
   Filter,
   Package,
 } from 'lucide-react';
-import { MinecraftInstance } from '../../types/instance';
+import { InstalledPack, MinecraftInstance } from '../../types/instance';
 import { NetheriteIngotIcon, EnderEyeIcon, GrassBlockIcon, CraftingTableIcon } from '../icons/MinecraftIcons';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { searchModrinth } from '../../services/modrinthApi';
 import { ModrinthSearchResult } from '../../types/launcher';
 import { InstallTargetModal, InstallableItem } from '../common/InstallTargetModal';
-import { invokeInstallInstanceAddon, isTauriEnvironment } from '../../services/tauriBridge';
+import {
+  invokeImportLocalAddonFiles,
+  invokeInstallInstanceAddon,
+  isTauriEnvironment,
+} from '../../services/tauriBridge';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface PacksViewProps {
   activeInstance: MinecraftInstance | null;
@@ -104,6 +109,10 @@ export const PacksView: React.FC<PacksViewProps> = ({
   };
 
   const handleConfirmInstall = async (targetInstanceId: string, item: InstallableItem) => {
+    if (item.type === 'modpack') {
+      setSearchError('Modpacks cannot be installed into an existing instance. Dedicated modpack installation is not available yet.');
+      return;
+    }
     const targetInst = instances.find((instance) => instance.id === targetInstanceId);
     if (!targetInst) {
       setSearchError('Select an existing instance before installing.');
@@ -121,6 +130,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
           provider: (item.source as 'modrinth' | 'curseforge') || 'modrinth',
           game_version: targetInst.gameVersion,
           loader: targetInst.loader,
+          custom_game_dir: targetInst.customGameDir,
           file_name: item.filename,
         });
         if (res.file_name) finalFileName = res.file_name;
@@ -145,6 +155,46 @@ export const PacksView: React.FC<PacksViewProps> = ({
       playMinecraftLevelUpSound();
     } catch (err) {
       setSearchError(`Install failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleImportZip = async () => {
+    if (!activeInstance || !onUpdateInstance) {
+      setSearchError('Select an instance before importing a resource pack.');
+      return;
+    }
+    setSearchError(null);
+    try {
+      const selected = await open({
+        multiple: true,
+        title: 'Select resource pack ZIP files',
+        filters: [{ name: 'Resource packs', extensions: ['zip'] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const imported = await invokeImportLocalAddonFiles(
+        activeInstance.id,
+        activeInstance.customGameDir,
+        paths,
+      );
+      const packs: InstalledPack[] = imported.map((file, index) => ({
+        id: `local_pack_${Date.now()}_${index}`,
+        name: file.name,
+        filename: file.file_name,
+        type: 'resourcepack',
+        enabled: true,
+        order: (activeInstance.packs?.length || 0) + index + 1,
+        description: 'Manually imported resource pack',
+        source: 'local',
+      }));
+      if (packs.length > 0) {
+        onUpdateInstance({
+          ...activeInstance,
+          packs: [...(activeInstance.packs || []), ...packs],
+        });
+      }
+    } catch (reason) {
+      setSearchError(`Import failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
   };
 
@@ -297,20 +347,14 @@ export const PacksView: React.FC<PacksViewProps> = ({
                 Drag or use arrows to change load priority. Toggle to enable or disable without uninstalling.
               </p>
             </div>
-            <label className="btn-mc flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-200 rounded cursor-pointer self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => void handleImportZip()}
+              className="btn-mc flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-200 rounded cursor-pointer self-start sm:self-auto"
+            >
               <Upload className="w-4 h-4 text-emerald-400" />
-              <span>Import ZIP File</span>
-              <input
-                type="file"
-                accept=".zip,.mrpack"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setSearchError(`Could not import ${file.name}: file-copy support is not available.`);
-                  e.target.value = '';
-                }}
-              />
-            </label>
+              <span>Import Resource ZIP</span>
+            </button>
           </div>
 
           {/* Installed Packs List */}
@@ -471,11 +515,13 @@ export const PacksView: React.FC<PacksViewProps> = ({
                       </div>
 
                       <button
+                        disabled={subTab === 'modpacks'}
+                        title={subTab === 'modpacks' ? 'Dedicated modpack installation is not available yet.' : undefined}
                         onClick={() =>
-                          handleOpenInstallModal({
+                          subTab !== 'modpacks' && handleOpenInstallModal({
                             id: item.project_id,
                             name: item.title,
-                            type: subTab === 'shaders' ? 'shader' : subTab === 'modpacks' ? 'modpack' : 'resourcepack',
+                            type: subTab === 'shaders' ? 'shader' : 'resourcepack',
                             source: 'modrinth',
                             iconUrl: item.icon_url,
                             description: item.description,
@@ -483,7 +529,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
                             author: item.author,
                           })
                         }
-                        className={`btn-mc px-3 py-1.5 text-xs font-bold rounded flex items-center gap-1.5 cursor-pointer ${
+                        className={`btn-mc px-3 py-1.5 text-xs font-bold rounded flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                           installed ? 'btn-mc-green text-white' : 'text-emerald-300'
                         }`}
                       >
@@ -495,7 +541,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
                         ) : (
                           <>
                             <Download className="w-3.5 h-3.5" />
-                            <span>Install...</span>
+                            <span>{subTab === 'modpacks' ? 'Coming soon' : 'Install...'}</span>
                           </>
                         )}
                       </button>

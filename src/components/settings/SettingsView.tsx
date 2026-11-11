@@ -252,6 +252,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const currentBtnTheme = localSettings.buttonColorTheme || 'emerald';
 
+  const handleSaveCurseForgeKey = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!curseForgeKeyInput.trim()) {
+      setCurseForgeKeyError('Enter your CurseForge API key.');
+      return;
+    }
+    setCurseForgeKeySaving(true);
+    setCurseForgeKeyError(null);
+    try {
+      await invokeSaveCurseForgeApiKey(curseForgeKeyInput.trim());
+      setCurseForgeKeyConfigured(true);
+      setCurseForgeKeyInput('');
+    } catch (reason) {
+      setCurseForgeKeyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setCurseForgeKeySaving(false);
+    }
+  };
+
+  const handleClearCurseForgeKey = async () => {
+    setCurseForgeKeySaving(true);
+    setCurseForgeKeyError(null);
+    try {
+      await invokeClearCurseForgeApiKey();
+      setCurseForgeKeyConfigured(false);
+      setCurseForgeKeyInput('');
+    } catch (reason) {
+      setCurseForgeKeyError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setCurseForgeKeySaving(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-8 select-none">
       {/* Header with Aesthetic Button */}
@@ -861,6 +894,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
             </div>
           </div>
+
+          <section className="card-obsidian p-5 sm:p-6 rounded-2xl space-y-4">
+            <div>
+              <h3 className="text-sm font-black text-white font-display flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-[var(--mc-accent)]" />
+                CurseForge API access
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Add your personal CurseForge API key. It is stored in this computer&apos;s credential store and is never included in the launcher or sent to GitHub.
+              </p>
+            </div>
+            {!isTauriEnvironment() ? (
+              <p className="text-xs text-amber-300">CurseForge access is available in the desktop launcher.</p>
+            ) : (
+              <>
+                <p className={`text-xs font-mono ${curseForgeKeyConfigured ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {curseForgeKeyConfigured === null
+                    ? 'Checking secure credential store…'
+                    : curseForgeKeyConfigured
+                      ? 'An API key is saved securely on this computer.'
+                      : 'No API key is saved on this computer.'}
+                </p>
+                <form onSubmit={(event) => void handleSaveCurseForgeKey(event)} className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    value={curseForgeKeyInput}
+                    onChange={(event) => setCurseForgeKeyInput(event.target.value)}
+                    placeholder="Paste your CurseForge API key"
+                    aria-label="CurseForge API key"
+                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-[var(--mc-accent)]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={curseForgeKeySaving || !curseForgeKeyInput.trim()}
+                    className="btn-mc btn-mc-green rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
+                  >
+                    {curseForgeKeySaving ? 'Saving…' : 'Save API key'}
+                  </button>
+                  {curseForgeKeyConfigured && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClearCurseForgeKey()}
+                      disabled={curseForgeKeySaving}
+                      className="btn-mc rounded-lg px-4 py-2 text-xs font-bold text-red-300 disabled:opacity-50"
+                    >
+                      Remove key
+                    </button>
+                  )}
+                </form>
+                {curseForgeKeyError && <p role="alert" className="text-xs text-red-300">{curseForgeKeyError}</p>}
+              </>
+            )}
+          </section>
         </div>
       </div>
     </div>

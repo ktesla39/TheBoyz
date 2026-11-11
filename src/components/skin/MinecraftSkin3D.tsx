@@ -39,18 +39,30 @@ export function MinecraftSkin3D({
 
     let active = true;
     let frameId = 0;
-    let visible = true;
+    let visible = false;
+    let initialized = false;
+    let initializationTimer = 0;
     let renderFrame: ((time: number) => void) | null = null;
     let renderer: THREE.WebGLRenderer | null = null;
+    let startInitialization: (() => void) | null = null;
     const visibilityObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
+      if (visible && !initialized && initializationTimer === 0) {
+        initializationTimer = window.setTimeout(() => {
+          initializationTimer = 0;
+          startInitialization?.();
+        }, 600);
+      }
+      if (!visible && initializationTimer !== 0) {
+        window.clearTimeout(initializationTimer);
+        initializationTimer = 0;
+      }
       if (visible && active && frameId === 0 && renderFrame) frameId = window.requestAnimationFrame(renderFrame);
       if (!visible && frameId !== 0) {
         window.cancelAnimationFrame(frameId);
         frameId = 0;
       }
     });
-    visibilityObserver?.observe(canvas);
     const ownedGeometries: THREE.BufferGeometry[] = [];
     const ownedMaterials: THREE.Material[] = [];
     const ownedTextures: THREE.Texture[] = [];
@@ -301,14 +313,28 @@ export function MinecraftSkin3D({
 
     };
 
-    void initialize().catch((reason: unknown) => {
-      if (!active) return;
-      console.error('Could not construct the 3D Minecraft skin preview.', reason);
-      setPreviewError('Could not build the 3D skin model. Check that the selected skin is valid.');
-    });
+    startInitialization = () => {
+      if (!active || initialized || !visible) return;
+      initialized = true;
+      void initialize().catch((reason: unknown) => {
+        if (!active) return;
+        console.error('Could not construct the 3D Minecraft skin preview.', reason);
+        setPreviewError('Could not build the 3D skin model. Check that the selected skin is valid.');
+      });
+    };
+    if (visibilityObserver) {
+      visibilityObserver.observe(canvas);
+    } else {
+      visible = true;
+      initializationTimer = window.setTimeout(() => {
+        initializationTimer = 0;
+        startInitialization?.();
+      }, 600);
+    }
 
     return () => {
       active = false;
+      if (initializationTimer !== 0) window.clearTimeout(initializationTimer);
       visibilityObserver?.disconnect();
       window.cancelAnimationFrame(frameId);
       modelGroupRef.current = null;

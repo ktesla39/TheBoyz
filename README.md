@@ -57,6 +57,8 @@ This is the first end-to-end implementation and is **not yet release-certified**
 ### 📦 Integrated Modrinth & CurseForge Discovery
 - Search and filter thousands of mods, modpacks, resource packs, and shaders directly inside the launcher.
 - Automatic version compatibility checking and dependency resolution.
+- CurseForge requires a personal API key, entered in Launcher Settings and stored in the operating system credential store. The GitHub Actions secret validates release builds but is not embedded in distributed binaries.
+- Browse the official Minecraft version catalog with search, filters, and 25 versions per page.
 
 ---
 
@@ -197,5 +199,3 @@ The website's download lookup uses the public `VITE_GITHUB_REPOSITORY` variable 
 ## 📜 License
 Built with passion by **The Boys Development Team**.
 Licensed under the [MIT License](LICENSE).
-#   T h e B o y z  
- 

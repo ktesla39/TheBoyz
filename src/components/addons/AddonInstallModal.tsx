@@ -44,7 +44,7 @@ interface AddonInstallModalProps {
       loader: 'fabric' | 'forge' | 'neoforge' | 'quilt' | 'vanilla';
     },
     addon: UnifiedAddonItem
-  ) => void;
+  ) => Promise<void>;
 }
 
 const MOD_LOADERS: ModLoaderType[] = ['vanilla', 'fabric', 'forge', 'neoforge', 'quilt'];
@@ -79,29 +79,32 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
   const [installDependencies, setInstallDependencies] = useState(true);
   const [isInstalling, setIsInstalling] = useState(false);
   const [isCreatingInline, setIsCreatingInline] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // New Instance Form state
   const bestVersion = addon?.gameVersions[0] ?? '';
-  const bestLoader = getModLoader(addon?.loaders?.[0]);
+  const bestLoader = getModLoader(addon?.loaders?.[0]) || 'vanilla';
   const [newInstanceName, setNewInstanceName] = useState(addon ? `${addon.name} Profile` : '');
   const [newInstanceVersion, setNewInstanceVersion] = useState(bestVersion);
-  const [newInstanceLoader, setNewInstanceLoader] = useState(bestLoader);
+  const [newInstanceLoader, setNewInstanceLoader] = useState<ModLoaderType>(bestLoader);
 
   useEffect(() => {
     setSelectedInstanceId(activeInstanceId ?? '');
     setNewInstanceName(addon ? `${addon.name} Profile` : '');
     setNewInstanceVersion(addon?.gameVersions[0] ?? '');
-    setNewInstanceLoader(getModLoader(addon?.loaders?.[0]));
+    setNewInstanceLoader(getModLoader(addon?.loaders?.[0]) || 'vanilla');
+    setCreateError(null);
   }, [addon?.id, activeInstanceId]);
 
   if (!isOpen || !addon) return null;
 
   const currentSelected = instances.find((i) => i.id === selectedInstanceId) ?? null;
   const supportedVersions = addon.gameVersions;
-  const supportedLoaders = addon.loaders
+  const reportedLoaders = addon.loaders
     ?.map(getModLoader)
     .filter((loader, index, loaders): loader is ModLoaderType => Boolean(loader) && loaders.indexOf(loader) === index)
     ?? [];
+  const supportedLoaders = reportedLoaders.length > 0 ? reportedLoaders : ['vanilla' as const];
 
   // Calculate compatibility for an arbitrary instance
   const getInstanceCompatibility = (inst: MinecraftInstance) => {
@@ -152,12 +155,12 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
     }
   };
 
-  const handleCreateAndInstall = () => {
+  const handleCreateAndInstall = async () => {
     if (!newInstanceName.trim() || !newInstanceVersion || !newInstanceLoader) return;
     setIsInstalling(true);
     playMinecraftLevelUpSound();
     try {
-      onCreateNewInstanceAndInstall(
+      await onCreateNewInstanceAndInstall(
         {
           name: newInstanceName.trim(),
           gameVersion: newInstanceVersion,
@@ -166,6 +169,8 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
         addon
       );
       onClose();
+    } catch (reason) {
+      setCreateError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setIsInstalling(false);
     }
@@ -239,7 +244,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                 <label className="text-xs font-bold text-slate-300 font-mono uppercase tracking-wider">
                   Select Target Instance ({instances.length})
                 </label>
-                {supportedVersions.length > 0 && supportedLoaders.length > 0 && (
+                {supportedVersions.length > 0 && (
                 <button
                   type="button"
                   onClick={() => {
@@ -253,6 +258,12 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                 </button>
                 )}
               </div>
+
+              {addon.type === 'modpack' && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                  Modpacks install into a dedicated new instance to keep their files and settings isolated.
+                </p>
+              )}
 
               <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {instances.length === 0 && (
@@ -404,10 +415,9 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                     <label className="block text-[11px] font-mono text-slate-400 mb-1">Mod Loader</label>
                     <select
                       value={newInstanceLoader}
-                      onChange={(e) => setNewInstanceLoader(getModLoader(e.target.value))}
+                      onChange={(e) => setNewInstanceLoader(getModLoader(e.target.value) || 'vanilla')}
                       className="w-full px-3 py-1.5 text-xs bg-black/60 border border-white/10 rounded-lg text-white font-mono focus:outline-none focus:border-emerald-500 uppercase"
                     >
-                      <option value="">Select reported loader</option>
                       {supportedLoaders.map((l) => (
                           <option key={l} value={l}>
                             {l.toUpperCase()}
@@ -445,7 +455,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
             <button
               type="button"
               onClick={handleInstallToExisting}
-              disabled={!currentSelected || isInstalling}
+              disabled={!currentSelected || isInstalling || addon.type === 'modpack'}
               className={`btn-mc flex items-center gap-2 px-6 py-2 text-white font-bold text-xs rounded cursor-pointer font-display disabled:opacity-50 ${
                 addon.source === 'curseforge' ? 'btn-mc-amber' : 'btn-mc-green'
               }`}
@@ -458,29 +468,32 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
               ) : (
                 <>
                   <Download className="w-3.5 h-3.5" />
-                  <span>Install to &quot;{currentSelected?.name}&quot;</span>
+                  <span>{addon.type === 'modpack' ? 'Create a dedicated instance below' : `Install to "${currentSelected?.name}"`}</span>
                 </>
               )}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={handleCreateAndInstall}
-              disabled={isInstalling || !newInstanceName.trim() || !newInstanceVersion || !newInstanceLoader}
-              className="btn-mc btn-mc-green flex items-center gap-2 px-6 py-2 text-white font-bold text-xs rounded cursor-pointer font-display"
-            >
-              {isInstalling ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Creating & Installing...</span>
-                </>
-              ) : (
-                <>
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Instance & Install</span>
-                </>
-              )}
-            </button>
+            <div className="flex flex-col items-end gap-2">
+              {createError && <p role="alert" className="max-w-xs text-right text-[11px] text-red-300">{createError}</p>}
+              <button
+                type="button"
+                onClick={() => void handleCreateAndInstall()}
+                disabled={isInstalling || !newInstanceName.trim() || !newInstanceVersion || !newInstanceLoader}
+                className="btn-mc btn-mc-green flex items-center gap-2 px-6 py-2 text-white font-bold text-xs rounded cursor-pointer font-display"
+              >
+                {isInstalling ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Creating & Installing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Instance & Install</span>
+                  </>
+                )}
+              </button>
+            </div>
           )}
         </div>
       </div>

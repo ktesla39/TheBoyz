@@ -28,11 +28,14 @@ import {
   invokeCurseForgeKeyStatus,
   invokeSearchCurseForge,
   invokeInstallInstanceAddon,
+  invokeInstallInstanceModpack,
+  invokeListInstanceMods,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { AddonDetailModal, UnifiedAddonItem } from './AddonDetailModal';
 import { AddonInstallModal } from './AddonInstallModal';
+import { getRecommendedJavaVersion } from '../../services/mojangApi';
 import {
   DiamondSwordIcon,
   CraftingTableIcon,
@@ -48,6 +51,7 @@ interface AddonsViewProps {
   activeInstance: MinecraftInstance | null;
   instances: MinecraftInstance[];
   onUpdateInstance: (updated: MinecraftInstance) => void;
+  onAddInstance: (instance: MinecraftInstance) => void;
   onAddTask?: (task: any) => void;
   onOpenCreateInstance?: () => void;
 }
@@ -75,6 +79,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   activeInstance,
   instances,
   onUpdateInstance,
+  onAddInstance,
   onOpenCreateInstance,
 }) => {
   // Navigation & Sub-views
@@ -279,27 +284,57 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   // Confirm Install into chosen instance
   const handleConfirmInstall = async (
     chosenInstanceId: string,
-    addon: UnifiedAddonItem
+    addon: UnifiedAddonItem,
+    _withDependencies = true,
+    providedInstance?: MinecraftInstance
   ) => {
-    const inst = instances.find((i) => i.id === chosenInstanceId);
+    if (addon.type === 'modpack' && !providedInstance) {
+      showNotification('Modpacks must be installed into a dedicated new instance.');
+      return;
+    }
+    const inst = providedInstance ?? instances.find((i) => i.id === chosenInstanceId);
     if (!inst) {
       showNotification('Select an existing instance before installing.');
       return;
+    }
+    if (addon.type === 'modpack' && !isTauriEnvironment()) {
+      showNotification('Modpack installation is available in the desktop launcher.');
+      throw new Error('Modpack installation is available in the desktop launcher.');
     }
     showNotification(`Downloading ${addon.name}...`);
     try {
       let finalFileName = `${addon.slug || String(addon.id)}.${['resourcepack', 'shader', 'datapack'].includes(addon.type) ? 'zip' : 'jar'}`;
       if (isTauriEnvironment()) {
-        const res = await invokeInstallInstanceAddon({
+        const request = {
           instance_id: inst.id,
           addon_id: String(addon.id),
           addon_name: addon.name,
           addon_type: addon.type,
-          provider: addon.source === 'curseforge' ? 'curseforge' : 'modrinth',
+          provider: addon.source === 'curseforge' ? 'curseforge' as const : 'modrinth' as const,
           game_version: inst.gameVersion,
           loader: inst.loader,
-        });
+          custom_game_dir: inst.customGameDir,
+        };
+        const res = addon.type === 'modpack'
+          ? await invokeInstallInstanceModpack(request)
+          : await invokeInstallInstanceAddon(request);
         if (res.file_name) finalFileName = res.file_name;
+        if (addon.type === 'modpack') {
+          const diskMods = await invokeListInstanceMods(inst.id, inst.customGameDir);
+          const importedMods: InstalledMod[] = diskMods.map((mod) => ({
+            id: mod.file_name,
+            name: mod.name,
+            filename: mod.file_name,
+            version: 'Modpack',
+            enabled: mod.enabled,
+            sizeBytes: mod.size_bytes,
+            source: 'local',
+          }));
+          onUpdateInstance({ ...inst, mods: importedMods });
+          playMinecraftLevelUpSound();
+          showNotification(`Installed ${addon.name} as a new modpack instance.`);
+          return;
+        }
       }
       const isPack = ['resourcepack', 'shader', 'datapack'].includes(addon.type);
       if (isPack) {
@@ -334,15 +369,45 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       showNotification(`Installed ${addon.name} to ${inst.name}!`);
     } catch (err) {
       showNotification(`Failed to install ${addon.name}: ${err instanceof Error ? err.message : String(err)}`);
+      if (providedInstance) throw err;
     }
   };
 
   // Create new instance and install
-  const handleCreateNewInstanceAndInstall = (
-    _newInstanceData: { name: string; gameVersion: string; loader: ModLoaderType },
+  const handleCreateNewInstanceAndInstall = async (
+    newInstanceData: { name: string; gameVersion: string; loader: ModLoaderType },
     addon: UnifiedAddonItem
   ) => {
-    showNotification(`To install ${addon.name}, select an existing instance or create one from the Instances tab.`);
+    const recommendedJava = getRecommendedJavaVersion(newInstanceData.gameVersion);
+    if (recommendedJava === null) {
+      throw new Error(`Could not determine a Java version for Minecraft ${newInstanceData.gameVersion}.`);
+    }
+    const instance: MinecraftInstance = {
+      id: `inst_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: newInstanceData.name,
+      icon: addon.type === 'modpack' ? 'crafting_table' : 'diamond_sword',
+      gameVersion: newInstanceData.gameVersion,
+      loader: newInstanceData.loader,
+      graphicsApi: 'auto',
+      javaConfig: {
+        path: '',
+        version: recommendedJava,
+        minMemoryMb: 2048,
+        maxMemoryMb: 4096,
+        jvmArguments: ['-XX:+UseG1GC'],
+        garbageCollector: 'G1GC',
+      },
+      resolution: { width: 1920, height: 1080, fullscreen: false },
+      mods: [],
+      packs: [],
+      worlds: [],
+      screenshots: [],
+      backups: [],
+      createdAt: Date.now(),
+      totalPlayTimeMinutes: 0,
+    };
+    onAddInstance(instance);
+    await handleConfirmInstall(instance.id, addon, true, instance);
   };
 
   // Toggle mod in inventory

@@ -30,10 +30,12 @@ import {
   invokeSearchCurseForge,
   invokeCurseForgeKeyStatus,
   invokeInstallInstanceAddon,
+  invokeImportLocalAddonFiles,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { InstanceCircleLogo } from './InstanceCircleLogo';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface InstanceAddonsModalProps {
   instance: MinecraftInstance;
@@ -97,7 +99,6 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
   const [curseForgeKeyPresent, setCurseForgeKeyPresent] = useState(true);
 
   const listContainerRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Set of installed mod / pack IDs for quick lookup
   const installedIds = useMemo(() => {
@@ -262,6 +263,10 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
   };
 
   const handleInstallAddon = async (item: UnifiedModalItem) => {
+    if (item.type === 'modpack') {
+      setError('Modpacks need a dedicated instance and cannot be installed as individual addons.');
+      return;
+    }
     playMinecraftClickSound();
     setInstallingId(item.id);
     setError(null);
@@ -276,8 +281,9 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
           addon_name: item.name,
           addon_type: item.type,
           provider: item.source,
-          game_version: instance.gameVersion,
+          game_version: filterStrictVersion ? instance.gameVersion : undefined,
           loader: instance.loader,
+          custom_game_dir: instance.customGameDir,
         });
         if (installResult.file_name) {
           finalFileName = installResult.file_name;
@@ -328,50 +334,64 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
     }
   };
 
-  const handleProcessFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const addedMods: InstalledMod[] = [];
-    const addedPacks: InstalledPack[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const lower = file.name.toLowerCase();
-      if (lower.endsWith('.jar')) {
-        const cleanName = file.name.replace(/\.jar$/, '');
-        addedMods.push({
-          id: `local_mod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          name: cleanName,
-          filename: file.name,
-          version: 'Local file',
-          enabled: true,
-          author: 'Manual import',
-          sizeBytes: file.size,
-          source: 'local',
-        });
-      } else if (lower.endsWith('.zip')) {
-        const cleanName = file.name.replace(/\.zip$/, '');
-        addedPacks.push({
-          id: `local_pack_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          name: cleanName,
-          filename: file.name,
-          type: 'resourcepack',
-          enabled: true,
-          order: instance.packs.length + addedPacks.length + 1,
-          description: 'Manually imported ZIP pack',
-          source: 'local',
-        });
-      }
+  const handleProcessFiles = async () => {
+    if (!isTauriEnvironment()) {
+      setError('Local addon imports are available in the desktop launcher.');
+      return;
     }
-
-    if (addedMods.length > 0 || addedPacks.length > 0) {
-      onUpdateInstance({
-        ...instance,
-        mods: [...instance.mods, ...addedMods],
-        packs: [...instance.packs, ...addedPacks],
+    setError(null);
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: true,
+        title: 'Select mod JAR or resource pack ZIP files',
+        filters: [{ name: 'Minecraft addons', extensions: ['jar', 'zip'] }],
       });
-      playMinecraftLevelUpSound();
-      setLocalFeedback(`Added ${addedMods.length + addedPacks.length} file(s) directly to ${instance.name}!`);
-      setTimeout(() => setLocalFeedback(null), 3500);
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 0) return;
+      const imported = await invokeImportLocalAddonFiles(instance.id, instance.customGameDir, paths);
+      const addedMods: InstalledMod[] = [];
+      const addedPacks: InstalledPack[] = [];
+
+      for (const file of imported) {
+        if (file.addon_type === 'mod') {
+          addedMods.push({
+            id: `local_mod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            name: file.name,
+            filename: file.file_name,
+            version: 'Local file',
+            enabled: true,
+            author: 'Manual import',
+            sizeBytes: file.size_bytes,
+            source: 'local',
+          });
+        } else {
+          addedPacks.push({
+            id: `local_pack_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            name: file.name,
+            filename: file.file_name,
+            type: 'resourcepack',
+            enabled: true,
+            order: instance.packs.length + addedPacks.length + 1,
+            description: 'Manually imported ZIP pack',
+            source: 'local',
+          });
+        }
+      }
+
+      if (addedMods.length > 0 || addedPacks.length > 0) {
+        onUpdateInstance({
+          ...instance,
+          mods: [...instance.mods, ...addedMods],
+          packs: [...instance.packs, ...addedPacks],
+        });
+        playMinecraftLevelUpSound();
+        setLocalFeedback(`Added ${addedMods.length + addedPacks.length} file(s) directly to ${instance.name}!`);
+        setTimeout(() => setLocalFeedback(null), 3500);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
@@ -485,17 +505,9 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
             </div>
 
             {/* File Drop button */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".jar,.zip"
-              multiple
-              className="hidden"
-              onChange={(e) => handleProcessFiles(e.target.files)}
-            />
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => void handleProcessFiles()}
               className="btn-mc flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-slate-200 font-bold rounded cursor-pointer font-display shrink-0"
               title="Install local .jar or .zip directly"
             >
@@ -599,6 +611,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
                   installedIds.has(addon.name.toLowerCase()) ||
                   (addon.slug && installedIds.has(addon.slug.toLowerCase()));
                 const isInstalling = installingId === addon.id;
+                const canInstall = addon.type !== 'modpack';
 
                 return (
                   <div
@@ -661,8 +674,9 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
                       ) : (
                         <button
                           type="button"
-                          disabled={isInstalling}
+                          disabled={isInstalling || !canInstall}
                           onClick={() => handleInstallAddon(addon)}
+                          title={canInstall ? undefined : 'Modpacks need a dedicated instance.'}
                           className="btn-mc btn-mc-green flex items-center gap-1.5 px-3 py-1.5 text-xs text-white font-black rounded cursor-pointer font-display shadow-md disabled:opacity-50"
                         >
                           {isInstalling ? (
@@ -670,7 +684,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
                           ) : (
                             <Download className="w-3.5 h-3.5" />
                           )}
-                          <span>{isInstalling ? 'Installing…' : 'Install'}</span>
+                          <span>{isInstalling ? 'Installing…' : canInstall ? 'Install' : 'Modpack'}</span>
                         </button>
                       )}
                     </div>

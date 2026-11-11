@@ -41,6 +41,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Validate CurseForge API key
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CURSEFORGE_API_KEY)) {
+            Write-Warning 'CURSEFORGE_API_KEY is not configured; CurseForge will require users to enter a key in Settings.'
+          } else {
+            $headers = @{ 'x-api-key' = $env:CURSEFORGE_API_KEY }
+            try {
+              $null = Invoke-RestMethod -Uri 'https://api.curseforge.com/v1/mods/search?gameId=432&pageSize=1' -Headers $headers -Method Get
+            } catch {
+              throw 'The configured CurseForge API key failed validation.'
+            }
+          }
+
       - name: Prepare updater configuration
         run: node scripts/prepare-updater.mjs
 

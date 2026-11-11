@@ -95,6 +95,7 @@ export const ModsBrowserView: React.FC<ModsBrowserViewProps> = ({
           provider: (item.source as 'modrinth' | 'curseforge') || 'modrinth',
           game_version: targetInst.gameVersion,
           loader: targetInst.loader,
+          custom_game_dir: targetInst.customGameDir,
           file_name: item.filename,
         });
         if (res.file_name) finalFileName = res.file_name;

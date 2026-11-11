@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Loader2, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Loader2, Plus } from 'lucide-react';
 import { fetchMojangVersionManifest, getRecommendedJavaVersion } from '../../services/mojangApi';
 import { MojangVersionManifest, ReleaseType } from '../../types/launcher';
 import { PickaxeIcon, GrassBlockIcon } from '../icons/MinecraftIcons';
@@ -15,6 +15,12 @@ export const VersionsView: React.FC<VersionsViewProps> = ({ onCreateInstanceWith
   const [reloadId, setReloadId] = useState(0);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<ReleaseType | 'all'>('release');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 25;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, typeFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +87,8 @@ export const VersionsView: React.FC<VersionsViewProps> = ({ onCreateInstanceWith
     const matchesType = typeFilter === 'all' || v.type === typeFilter;
     return matchesSearch && matchesType;
   });
+  const totalPages = Math.max(1, Math.ceil(filteredVersions.length / pageSize));
+  const pageVersions = filteredVersions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-6 select-none">
@@ -159,7 +167,7 @@ export const VersionsView: React.FC<VersionsViewProps> = ({ onCreateInstanceWith
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 font-mono">
-              {filteredVersions.slice(0, 50).map((v) => {
+              {pageVersions.map((v) => {
                 const recommendedJava = getRecommendedJavaVersion(v.id);
                 return (
                   <tr key={v.id} className="hover:bg-white/[0.02] transition-colors">
@@ -207,6 +215,32 @@ export const VersionsView: React.FC<VersionsViewProps> = ({ onCreateInstanceWith
           </div>
         )}
       </div>
+      {filteredVersions.length > 0 && (
+        <div className="flex items-center justify-between gap-3 text-xs text-slate-400">
+          <span>
+            Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredVersions.length)} of {filteredVersions.length} versions
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+              className="btn-mc flex items-center gap-1 rounded px-3 py-2 font-bold disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </button>
+            <span className="font-mono">Page {currentPage} of {totalPages}</span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+              className="btn-mc flex items-center gap-1 rounded px-3 py-2 font-bold disabled:opacity-40"
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
