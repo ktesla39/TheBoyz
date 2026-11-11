@@ -14,11 +14,12 @@ jobs:
     runs-on: windows-latest
     env:
       VITE_GITHUB_REPOSITORY: ${{ github.repository }}
-      VITE_MICROSOFT_CLIENT_ID: 00000000402b5328
+      VITE_MICROSOFT_CLIENT_ID: fa5a840b-f490-4075-aaa9-83a6763c602e
       VITE_TAURI_UPDATER_ENABLED: 'true'
       TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
