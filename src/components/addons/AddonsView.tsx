@@ -30,6 +30,7 @@ import {
   invokeInstallInstanceAddon,
   invokeInstallInstanceModpack,
   invokeListInstanceMods,
+  invokeListInstanceAddons,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
@@ -51,7 +52,7 @@ interface AddonsViewProps {
   activeInstance: MinecraftInstance | null;
   instances: MinecraftInstance[];
   onUpdateInstance: (updated: MinecraftInstance) => void;
-  onAddInstance: (instance: MinecraftInstance) => void;
+  onAddInstance: (instance: MinecraftInstance) => void | Promise<void>;
   onAddTask?: (task: any) => void;
   onOpenCreateInstance?: () => void;
 }
@@ -65,7 +66,7 @@ const CURSEFORGE_CLASS_IDS: Record<Exclude<AddonCategory, 'all'>, number> = {
   modpack: 4471,
   resourcepack: 12,
   shader: 6552,
-  datapack: 17,
+  datapack: 6945,
 };
 
 const CURSEFORGE_LOADER_IDS: Partial<Record<ModLoaderType, number>> = {
@@ -116,6 +117,9 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [installingAddon, setInstallingAddon] = useState<UnifiedAddonItem | null>(null);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [selectedAddons, setSelectedAddons] = useState<UnifiedAddonItem[]>([]);
+  const [isBulkInstalling, setIsBulkInstalling] = useState(false);
+  const [bulkInstallProgress, setBulkInstallProgress] = useState(0);
 
   // Notification Banner
   const [notification, setNotification] = useState<string | null>(null);
@@ -134,12 +138,8 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
     [instances, selectedInstanceId, activeInstance]
   );
 
-  // Synchronize target instance loader filter when switching to browse
-  useEffect(() => {
-    if (targetInstance && targetInstance.loader !== 'vanilla' && loaderFilter === 'all') {
-      setLoaderFilter(targetInstance.loader);
-    }
-  }, [targetInstance]);
+  const supportsLoaderFilter = category === 'mod' || category === 'modpack';
+  const searchLoader = supportsLoaderFilter && loaderFilter !== 'all' ? loaderFilter : undefined;
 
   // Reset page to 1 when filters change
   useEffect(() => {
@@ -164,7 +164,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
           query: searchQuery.trim() || undefined,
           classId: category === 'all' ? undefined : CURSEFORGE_CLASS_IDS[category],
           gameVersion: versionFilter === 'all' ? undefined : versionFilter,
-          modLoaderType: loaderFilter === 'all' ? undefined : CURSEFORGE_LOADER_IDS[loaderFilter],
+          modLoaderType: searchLoader ? CURSEFORGE_LOADER_IDS[searchLoader] : undefined,
           sortField: sortBy === 'downloads' ? 6 : sortBy === 'newest' ? 3 : sortBy === 'name' ? 4 : 2,
           index: (currentPage - 1) * 20,
           pageSize: 20,
@@ -180,7 +180,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       const res = await searchModrinth({
         query: searchQuery.trim() || undefined,
         projectType: pType,
-        loader: loaderFilter === 'all' ? undefined : loaderFilter,
+        loader: searchLoader,
         gameVersion: versionFilter === 'all' ? undefined : versionFilter,
         sortBy: sortBy === 'downloads' ? 'downloads' : sortBy === 'newest' ? 'newest' : sortBy === 'popularity' ? 'follows' : 'relevance',
         limit: 20,
@@ -307,12 +307,13 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       if (isTauriEnvironment()) {
         const request = {
           instance_id: inst.id,
+          instance_name: inst.name,
           addon_id: String(addon.id),
           addon_name: addon.name,
           addon_type: addon.type,
           provider: addon.source === 'curseforge' ? 'curseforge' as const : 'modrinth' as const,
           game_version: inst.gameVersion,
-          loader: inst.loader,
+          loader: addon.type === 'mod' || addon.type === 'modpack' ? inst.loader : undefined,
           custom_game_dir: inst.customGameDir,
         };
         const res = addon.type === 'modpack'
@@ -338,6 +339,28 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       }
       const isPack = ['resourcepack', 'shader', 'datapack'].includes(addon.type);
       if (isPack) {
+        const oldPack = inst.packs.find((pack) => pack.id === String(addon.id));
+        let packs = [...inst.packs];
+        if (isTauriEnvironment()) {
+          const diskAddons = await invokeListInstanceAddons(inst.id, inst.customGameDir);
+          const diskPacks = diskAddons.filter((item) => item.addon_type !== 'mod');
+          packs = diskPacks.map((item, index) => {
+            const existing = inst.packs.find((pack) =>
+              pack.filename === item.file_name && pack.type === item.addon_type
+            ) ?? (item.file_name === finalFileName ? oldPack : undefined);
+            return {
+              id: existing?.id ?? `${item.addon_type}:${item.file_name}`,
+              name: existing?.name ?? (item.file_name === finalFileName ? addon.name : item.name),
+              filename: item.file_name,
+              type: item.addon_type as InstalledPack['type'],
+              enabled: item.enabled,
+              order: existing?.order ?? index + 1,
+              description: existing?.description,
+              iconUrl: existing?.iconUrl,
+              source: existing?.source ?? 'local',
+            };
+          });
+        } else {
         const newPack: InstalledPack = {
           id: String(addon.id),
           name: addon.name,
@@ -349,7 +372,9 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
           iconUrl: addon.iconUrl || undefined,
           source: addon.source,
         };
-        onUpdateInstance({ ...inst, packs: [...inst.packs, newPack] });
+          packs.push(newPack);
+        }
+        onUpdateInstance({ ...inst, packs });
       } else {
         const newMod: InstalledMod = {
           id: String(addon.id),
@@ -370,6 +395,114 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
     } catch (err) {
       showNotification(`Failed to install ${addon.name}: ${err instanceof Error ? err.message : String(err)}`);
       if (providedInstance) throw err;
+    }
+  };
+
+  const handleBulkInstall = async () => {
+    if (!targetInstance || selectedAddons.length === 0 || isBulkInstalling) return;
+    const addons = selectedAddons.filter((addon) => addon.type !== 'modpack');
+    if (addons.length !== selectedAddons.length) {
+      showNotification('Modpacks must be installed individually into new instances.');
+      return;
+    }
+    if (!isTauriEnvironment()) {
+      showNotification('Batch addon installation is available in the desktop launcher.');
+      return;
+    }
+
+    setIsBulkInstalling(true);
+    setBulkInstallProgress(0);
+    const installed: Array<{ addon: UnifiedAddonItem; fileName: string }> = [];
+    const failures: string[] = [];
+    for (const [index, addon] of addons.entries()) {
+      setBulkInstallProgress(index + 1);
+      try {
+        const result = await invokeInstallInstanceAddon({
+          instance_id: targetInstance.id,
+          instance_name: targetInstance.name,
+          addon_id: String(addon.id),
+          addon_name: addon.name,
+          addon_type: addon.type,
+          provider: addon.source === 'curseforge' ? 'curseforge' : 'modrinth',
+          game_version: targetInstance.gameVersion,
+          loader: addon.type === 'mod' ? targetInstance.loader : undefined,
+          custom_game_dir: targetInstance.customGameDir,
+        });
+        installed.push({ addon, fileName: result.file_name });
+      } catch (reason) {
+        failures.push(
+          `${addon.name}: ${reason instanceof Error ? reason.message : String(reason)}`
+        );
+      }
+    }
+
+    try {
+      if (installed.length > 0) {
+        const [diskMods, diskAddons] = await Promise.all([
+          invokeListInstanceMods(targetInstance.id, targetInstance.customGameDir),
+          invokeListInstanceAddons(targetInstance.id, targetInstance.customGameDir),
+        ]);
+        const installedByFile = new Map(
+          installed.map(({ addon, fileName }) => [`${addon.type}:${fileName}`, addon])
+        );
+        const mods: InstalledMod[] = diskMods.map((item) => {
+          const previous = targetInstance.mods.find((mod) => mod.filename === item.file_name);
+          const addon = installedByFile.get(`mod:${item.file_name}`);
+          return {
+            id: previous?.id ?? String(addon?.id ?? item.file_name),
+            name: addon?.name ?? previous?.name ?? item.name,
+            filename: item.file_name,
+            version: addon ? 'Latest' : previous?.version ?? 'Installed',
+            enabled: item.enabled,
+            sizeBytes: item.size_bytes,
+            author: addon?.author ?? previous?.author,
+            description: addon?.summary ?? previous?.description,
+            iconUrl: addon?.iconUrl ?? previous?.iconUrl,
+            source: addon?.source ?? previous?.source ?? 'local',
+            modrinthId: addon?.source === 'modrinth' ? String(addon.id) : previous?.modrinthId,
+          };
+        });
+        const packs: InstalledPack[] = diskAddons
+          .filter((item) => item.addon_type !== 'mod')
+          .map((item, index) => {
+            const previous = targetInstance.packs.find(
+              (pack) => pack.filename === item.file_name && pack.type === item.addon_type
+            );
+            const addon = installedByFile.get(`${item.addon_type}:${item.file_name}`);
+            return {
+              id: previous?.id ?? String(addon?.id ?? `${item.addon_type}:${item.file_name}`),
+              name: addon?.name ?? previous?.name ?? item.name,
+              filename: item.file_name,
+              type: item.addon_type as InstalledPack['type'],
+              enabled: item.enabled,
+              order: previous?.order ?? index + 1,
+              description: addon?.summary ?? previous?.description,
+              iconUrl: addon?.iconUrl ?? previous?.iconUrl,
+              source: addon?.source ?? previous?.source ?? 'local',
+            };
+          });
+        onUpdateInstance({ ...targetInstance, mods, packs });
+      }
+    } catch (reason) {
+      failures.push(
+        `Could not refresh the installed addon list: ${reason instanceof Error ? reason.message : String(reason)}`
+      );
+    } finally {
+      const installedNames = new Set(installed.map(({ addon }) => `${addon.source}:${addon.id}`));
+      setSelectedAddons((current) =>
+        current.filter((addon) => !installedNames.has(`${addon.source}:${addon.id}`))
+      );
+      setIsBulkInstalling(false);
+      setBulkInstallProgress(0);
+    }
+
+    if (failures.length > 0) {
+      showNotification(
+        `Installed ${installed.length}/${addons.length}. ${failures.slice(0, 2).join(' ')}`
+      );
+    } else {
+      playMinecraftLevelUpSound();
+      showNotification(`Installed ${installed.length} addons to ${targetInstance.name}.`);
     }
   };
 
@@ -406,7 +539,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       createdAt: Date.now(),
       totalPlayTimeMinutes: 0,
     };
-    onAddInstance(instance);
+    await onAddInstance(instance);
     await handleConfirmInstall(instance.id, addon, true, instance);
   };
 
@@ -614,7 +747,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                 {installedMods.filter((m) => m.enabled).length} / {installedMods.length}
               </div>
               <div className="text-[11px] text-slate-400 font-mono truncate">
-                In .minecraft/instances/{targetInstance?.id}/mods
+                In .minecraft/instances/{targetInstance?.name}/mods
               </div>
             </div>
 
@@ -1013,6 +1146,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
               </div>
 
               {/* Loader Selector */}
+              {supportsLoaderFilter && (
               <div className="lg:col-span-2">
                 <select
                   value={loaderFilter}
@@ -1029,6 +1163,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                   <option value="quilt">QUILT</option>
                 </select>
               </div>
+              )}
 
               {/* Sorter Selector */}
               <div className="lg:col-span-2">
@@ -1064,6 +1199,43 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
               </div>
             )}
           </div>
+
+          {selectedAddons.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs font-mono text-emerald-200">
+                {selectedAddons.length} addon{selectedAddons.length === 1 ? '' : 's'} selected
+                {targetInstance ? ` for ${targetInstance.name}` : ' — select an instance above'}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isBulkInstalling}
+                  onClick={() => setSelectedAddons([])}
+                  className="btn-mc rounded px-3 py-1.5 text-xs font-bold text-slate-300 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  disabled={!targetInstance || isBulkInstalling}
+                  onClick={() => void handleBulkInstall()}
+                  className="btn-mc btn-mc-green flex items-center gap-2 rounded px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                >
+                  {isBulkInstalling ? (
+                    <>
+                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      <span>Installing {bulkInstallProgress}/{selectedAddons.length}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Install Selected</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Results Grid */}
           {loading ? (
@@ -1108,6 +1280,10 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                   const isCompatible = targetInstance
                     ? addon.gameVersions.some((v) => v.startsWith(targetInstance.gameVersion.slice(0, 4)))
                     : true;
+                  const selectionKey = `${addon.source}:${addon.id}`;
+                  const isSelected = selectedAddons.some(
+                    (selected) => `${selected.source}:${selected.id}` === selectionKey
+                  );
 
                   return (
                     <div
@@ -1118,6 +1294,25 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                       <div className="space-y-2.5">
                         {/* Card Header: Icon + Title + Source Badge */}
                         <div className="flex items-start gap-3 min-w-0">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${addon.name} for batch installation`}
+                            checked={isSelected}
+                            disabled={addon.type === 'modpack' || isInstalledInTarget || isBulkInstalling}
+                            title={addon.type === 'modpack' ? 'Modpacks must be installed individually' : undefined}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => {
+                              setSelectedAddons((current) =>
+                                event.target.checked
+                                  ? [...current, addon]
+                                  : current.filter(
+                                      (selected) =>
+                                        `${selected.source}:${selected.id}` !== selectionKey
+                                    )
+                              );
+                            }}
+                            className="mt-3 h-4 w-4 shrink-0 cursor-pointer accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+                          />
                           {addon.iconUrl ? (
                             <img
                               src={addon.iconUrl}

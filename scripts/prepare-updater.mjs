@@ -28,6 +28,12 @@ if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test
 const configPath = process.env.TAURI_CONFIG_PATH
   ? path.resolve(process.env.TAURI_CONFIG_PATH)
   : fileURLToPath(new URL('../src-tauri/tauri.conf.json', import.meta.url));
+const repositoryRoot = path.resolve(path.dirname(configPath), '..');
+const cargoManifestPath = path.join(repositoryRoot, 'src-tauri', 'Cargo.toml');
+const cargoLockPath = path.join(repositoryRoot, 'src-tauri', 'Cargo.lock');
+const packagePath = path.join(repositoryRoot, 'package.json');
+const packageLockPath = path.join(repositoryRoot, 'package-lock.json');
+
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 config.version = version;
 config.plugins ??= {};
@@ -38,5 +44,36 @@ config.plugins.updater = {
   requireSignedVersion: true,
 };
 
+const cargoManifest = await readFile(cargoManifestPath, 'utf8');
+const updatedCargoManifest = cargoManifest.replace(
+  /^(\[package\][\s\S]*?^version\s*=\s*")[^"]+(")/m,
+  (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
+);
+if (updatedCargoManifest === cargoManifest) {
+  throw new Error('Could not locate the Rust package version in src-tauri/Cargo.toml.');
+}
+
+const cargoLock = await readFile(cargoLockPath, 'utf8');
+const updatedCargoLock = cargoLock.replace(
+  /^(\[\[package\]\]\r?\nname = "the-boys-launcher"\r?\nversion = ")[^"]+(")/m,
+  (_match, prefix, suffix) => `${prefix}${version}${suffix}`,
+);
+if (updatedCargoLock === cargoLock) {
+  throw new Error('Could not locate the launcher package version in src-tauri/Cargo.lock.');
+}
+
+const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
+const packageLock = JSON.parse(await readFile(packageLockPath, 'utf8'));
+packageJson.version = version;
+packageLock.version = version;
+if (!packageLock.packages?.['']) {
+  throw new Error('Could not locate the root package in package-lock.json.');
+}
+packageLock.packages[''].version = version;
+
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
-console.log(`Prepared signed updater metadata for ${repository} ${version}.`);
+await writeFile(cargoManifestPath, updatedCargoManifest);
+await writeFile(cargoLockPath, updatedCargoLock);
+await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+await writeFile(packageLockPath, `${JSON.stringify(packageLock, null, 2)}\n`);
+console.log(`Prepared signed updater metadata and synchronized package versions for ${repository} ${version}.`);

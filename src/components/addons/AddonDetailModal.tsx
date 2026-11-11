@@ -96,7 +96,8 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
     const instanceLoader = targetInstance.loader;
 
     // Check loader compatibility
-    const hasLoader = addon.loaders && addon.loaders.length > 0;
+    const usesModLoader = addon.type === 'mod' || addon.type === 'modpack';
+    const hasLoader = usesModLoader && addon.loaders && addon.loaders.length > 0;
     const loaderMatches = !hasLoader || addon.loaders?.some((l) => l.toLowerCase() === instanceLoader.toLowerCase()) || instanceLoader === 'vanilla';
 
     // Check version compatibility
@@ -291,7 +292,10 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
             <div className="min-w-0 flex-1">
               <span className="text-xs font-bold font-display block">{compat.message}</span>
               <span className="text-[11px] opacity-80 font-mono block mt-0.5">
-                Supported Loaders: {addon.loaders?.join(', ') || 'Not specified by source'} • Minecraft Versions: {addon.gameVersions.join(', ')}
+                {addon.type === 'mod' || addon.type === 'modpack'
+                  ? `Supported Loaders: ${addon.loaders?.join(', ') || 'Not specified by source'} • `
+                  : ''}
+                Minecraft Versions: {addon.gameVersions.join(', ')}
               </span>
             </div>
           </div>
@@ -438,7 +442,12 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
                       <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5">
                         <span>MC {ver}</span>
                         <span>•</span>
-                        <span>{addon.loaders?.join(', ') || 'Loader not specified'}</span>
+                        {(addon.type === 'mod' || addon.type === 'modpack') && (
+                          <>
+                            <span>{addon.loaders?.join(', ') || 'Loader not specified'}</span>
+                            <span>•</span>
+                          </>
+                        )}
                       </div>
                     </div>
 

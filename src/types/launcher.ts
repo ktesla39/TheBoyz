@@ -90,7 +90,7 @@ export interface SystemHardwareInfo {
   gpuVendor: string | null;
   gpuRenderer: string | null;
   supportedApis: {
-    opengl: boolean;
+    opengl: boolean | null;
     vulkan: boolean | null;
     directx12: boolean | null;
   };

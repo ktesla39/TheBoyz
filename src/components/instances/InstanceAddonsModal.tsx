@@ -30,6 +30,8 @@ import {
   invokeSearchCurseForge,
   invokeCurseForgeKeyStatus,
   invokeInstallInstanceAddon,
+  invokeListInstanceMods,
+  invokeListInstanceAddons,
   invokeImportLocalAddonFiles,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
@@ -67,7 +69,7 @@ const CURSEFORGE_CLASS_IDS: Record<Exclude<AddonCategory, 'all'>, number> = {
   mod: 6,
   resourcepack: 12,
   shader: 6552,
-  datapack: 17,
+  datapack: 6945,
 };
 
 const CURSEFORGE_LOADER_IDS: Partial<Record<ModLoaderType, number>> = {
@@ -93,7 +95,13 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
   const [items, setItems] = useState<UnifiedModalItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchLoader = category === 'mod'
+    ? instance.loader !== 'vanilla' ? instance.loader : undefined
+    : undefined;
   const [installingId, setInstallingId] = useState<string | null>(null);
+  const [selectedAddons, setSelectedAddons] = useState<UnifiedModalItem[]>([]);
+  const [isBatchInstalling, setIsBatchInstalling] = useState(false);
+  const [batchInstallProgress, setBatchInstallProgress] = useState(0);
   const [filterStrictVersion, setFilterStrictVersion] = useState(true);
   const [localFeedback, setLocalFeedback] = useState<string | null>(null);
   const [curseForgeKeyPresent, setCurseForgeKeyPresent] = useState(true);
@@ -144,7 +152,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         const options: SearchOptions = {
           query: searchQuery.trim() || undefined,
           projectType: category === 'all' ? undefined : category,
-          loader: instance.loader !== 'vanilla' ? instance.loader : undefined,
+          loader: searchLoader,
           gameVersion: filterStrictVersion ? instance.gameVersion : undefined,
           limit: PAGE_SIZE,
           offset,
@@ -180,7 +188,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         }
 
         const classId = category === 'all' ? undefined : CURSEFORGE_CLASS_IDS[category];
-        const loaderId = CURSEFORGE_LOADER_IDS[instance.loader];
+        const loaderId = searchLoader ? CURSEFORGE_LOADER_IDS[searchLoader] : undefined;
         const sortField = sortBy === 'downloads' ? 6 : sortBy === 'updated' ? 3 : sortBy === 'newest' ? 11 : 2;
 
         const cfData = await invokeSearchCurseForge({
@@ -196,13 +204,15 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         const cfItems = Array.isArray(cfData.data) ? cfData.data : [];
         const mapped: UnifiedModalItem[] = cfItems.map((item: CurseForgeSearchResult) => {
           const itemType =
-            item.classId === 12
-              ? 'resourcepack'
-              : item.classId === 6552
-                ? 'shader'
-                : item.classId === 17
-                  ? 'datapack'
-                  : 'mod';
+            item.classId === 4471
+              ? 'modpack'
+              : item.classId === 12
+                ? 'resourcepack'
+                : item.classId === 6552
+                  ? 'shader'
+                  : item.classId === 6945
+                    ? 'datapack'
+                    : 'mod';
 
           return {
             id: String(item.id),
@@ -236,7 +246,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
     searchQuery,
     sortBy,
     currentPage,
-    instance.loader,
+    searchLoader,
     instance.gameVersion,
     filterStrictVersion,
   ]);
@@ -277,12 +287,13 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
       if (isTauriEnvironment()) {
         const installResult = await invokeInstallInstanceAddon({
           instance_id: instance.id,
+          instance_name: instance.name,
           addon_id: item.id,
           addon_name: item.name,
           addon_type: item.type,
           provider: item.source,
           game_version: filterStrictVersion ? instance.gameVersion : undefined,
-          loader: instance.loader,
+          loader: item.type === 'mod' || item.type === 'modpack' ? instance.loader : undefined,
           custom_game_dir: instance.customGameDir,
         });
         if (installResult.file_name) {
@@ -292,21 +303,41 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
 
       const isPack = ['resourcepack', 'shader', 'datapack'].includes(item.type);
       if (isPack) {
-        const newPack: InstalledPack = {
-          id: item.id,
-          name: item.name,
-          filename: finalFileName,
-          type: item.type as 'resourcepack' | 'shader' | 'datapack',
-          enabled: true,
-          order: instance.packs.length + 1,
-          description: item.summary,
-          iconUrl: item.iconUrl,
-          source: item.source,
-        };
-        onUpdateInstance({
-          ...instance,
-          packs: [...instance.packs, newPack],
-        });
+        const diskAddons = isTauriEnvironment()
+          ? await invokeListInstanceAddons(instance.id, instance.customGameDir)
+          : [];
+        const newPacks: InstalledPack[] = diskAddons
+          .filter((entry) => entry.addon_type !== 'mod')
+          .map((entry, index) => {
+            const existing = instance.packs.find((pack) =>
+              pack.filename === entry.file_name && pack.type === entry.addon_type
+            );
+            return {
+              id: existing?.id ?? `${entry.addon_type}:${entry.file_name}`,
+              name: existing?.name ?? (entry.file_name === finalFileName ? item.name : entry.name),
+              filename: entry.file_name,
+              type: entry.addon_type as InstalledPack['type'],
+              enabled: entry.enabled,
+              order: existing?.order ?? index + 1,
+              description: existing?.description,
+              iconUrl: existing?.iconUrl,
+              source: existing?.source ?? 'local',
+            };
+          });
+        if (!isTauriEnvironment()) {
+          newPacks.push({
+            id: item.id,
+            name: item.name,
+            filename: finalFileName,
+            type: item.type as InstalledPack['type'],
+            enabled: true,
+            order: instance.packs.length + 1,
+            description: item.summary,
+            iconUrl: item.iconUrl,
+            source: item.source,
+          });
+        }
+        onUpdateInstance({ ...instance, packs: newPacks });
       } else {
         const newMod: InstalledMod = {
           id: item.id,
@@ -331,6 +362,125 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setInstallingId(null);
+    }
+  };
+
+  const toggleSelectedAddon = (item: UnifiedModalItem) => {
+    const key = `${item.source}:${item.id}`;
+    setSelectedAddons((current) =>
+      current.some((selected) => `${selected.source}:${selected.id}` === key)
+        ? current.filter((selected) => `${selected.source}:${selected.id}` !== key)
+        : [...current, item]
+    );
+  };
+
+  const handleBatchInstall = async () => {
+    if (selectedAddons.length === 0 || isBatchInstalling) return;
+    const addons = selectedAddons.filter((item) => item.type !== 'modpack');
+    if (addons.length !== selectedAddons.length) {
+      setError('Modpacks need a dedicated new instance and cannot be batch-installed.');
+      return;
+    }
+    if (!isTauriEnvironment()) {
+      setError('Batch addon installation is available in the desktop launcher.');
+      return;
+    }
+
+    setIsBatchInstalling(true);
+    setBatchInstallProgress(0);
+    setError(null);
+    const installed: Array<{ addon: UnifiedModalItem; fileName: string }> = [];
+    const failures: string[] = [];
+
+    for (const [index, addon] of addons.entries()) {
+      setBatchInstallProgress(index + 1);
+      try {
+        const result = await invokeInstallInstanceAddon({
+          instance_id: instance.id,
+          instance_name: instance.name,
+          addon_id: addon.id,
+          addon_name: addon.name,
+          addon_type: addon.type,
+          provider: addon.source,
+          game_version: filterStrictVersion ? instance.gameVersion : undefined,
+          loader: addon.type === 'mod' ? instance.loader : undefined,
+          custom_game_dir: instance.customGameDir,
+        });
+        installed.push({ addon, fileName: result.file_name });
+      } catch (reason) {
+        failures.push(
+          `${addon.name}: ${reason instanceof Error ? reason.message : String(reason)}`
+        );
+      }
+    }
+
+    try {
+      if (installed.length > 0) {
+        const [diskMods, diskAddons] = await Promise.all([
+          invokeListInstanceMods(instance.id, instance.customGameDir),
+          invokeListInstanceAddons(instance.id, instance.customGameDir),
+        ]);
+        const installedByFile = new Map(
+          installed.map(({ addon, fileName }) => [`${addon.type}:${fileName}`, addon])
+        );
+        const mods: InstalledMod[] = diskMods.map((entry) => {
+          const previous = instance.mods.find((mod) => mod.filename === entry.file_name);
+          const addon = installedByFile.get(`mod:${entry.file_name}`);
+          return {
+            id: previous?.id ?? addon?.id ?? entry.file_name,
+            name: addon?.name ?? previous?.name ?? entry.name,
+            filename: entry.file_name,
+            version: addon ? 'Latest' : previous?.version ?? 'Installed',
+            enabled: entry.enabled,
+            sizeBytes: entry.size_bytes,
+            author: addon?.author ?? previous?.author,
+            description: addon?.summary ?? previous?.description,
+            iconUrl: addon?.iconUrl ?? previous?.iconUrl,
+            source: addon?.source ?? previous?.source ?? 'local',
+            modrinthId: addon?.source === 'modrinth' ? addon.id : previous?.modrinthId,
+          };
+        });
+        const packs: InstalledPack[] = diskAddons
+          .filter((entry) => entry.addon_type !== 'mod')
+          .map((entry, index) => {
+            const previous = instance.packs.find(
+              (pack) => pack.filename === entry.file_name && pack.type === entry.addon_type
+            );
+            const addon = installedByFile.get(`${entry.addon_type}:${entry.file_name}`);
+            return {
+              id: previous?.id ?? addon?.id ?? `${entry.addon_type}:${entry.file_name}`,
+              name: addon?.name ?? previous?.name ?? entry.name,
+              filename: entry.file_name,
+              type: entry.addon_type as InstalledPack['type'],
+              enabled: entry.enabled,
+              order: previous?.order ?? index + 1,
+              description: addon?.summary ?? previous?.description,
+              iconUrl: addon?.iconUrl ?? previous?.iconUrl,
+              source: addon?.source ?? previous?.source ?? 'local',
+            };
+          });
+        onUpdateInstance({ ...instance, mods, packs });
+      }
+    } catch (reason) {
+      failures.push(
+        `Could not refresh the installed addon list: ${reason instanceof Error ? reason.message : String(reason)}`
+      );
+    } finally {
+      const installedKeys = new Set(
+        installed.map(({ addon }) => `${addon.source}:${addon.id}`)
+      );
+      setSelectedAddons((current) =>
+        current.filter((addon) => !installedKeys.has(`${addon.source}:${addon.id}`))
+      );
+      setIsBatchInstalling(false);
+      setBatchInstallProgress(0);
+    }
+
+    if (failures.length > 0) {
+      setError(`Installed ${installed.length}/${addons.length}. ${failures.slice(0, 2).join(' ')}`);
+    } else {
+      playMinecraftLevelUpSound();
+      setLocalFeedback(`Installed ${installed.length} addons into ${instance.name}.`);
     }
   };
 
@@ -566,6 +716,35 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
           </div>
         </div>
 
+        {(selectedAddons.length > 0 || isBatchInstalling) && (
+          <div className="flex items-center justify-between gap-3 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5">
+            <span className="text-[11px] font-mono text-emerald-200">
+              {isBatchInstalling
+                ? `Installing ${batchInstallProgress} of ${selectedAddons.length} selected addons…`
+                : `${selectedAddons.length} addons selected`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isBatchInstalling}
+                onClick={() => setSelectedAddons([])}
+                className="text-[11px] font-mono text-slate-400 hover:text-white disabled:opacity-50"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                disabled={isBatchInstalling || selectedAddons.length === 0}
+                onClick={() => void handleBatchInstall()}
+                className="btn-mc btn-mc-green flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+              >
+                {isBatchInstalling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                {isBatchInstalling ? 'Installing…' : 'Install Selected'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Results Container */}
         <div
           ref={listContainerRef}
@@ -612,12 +791,24 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
                   (addon.slug && installedIds.has(addon.slug.toLowerCase()));
                 const isInstalling = installingId === addon.id;
                 const canInstall = addon.type !== 'modpack';
+                const isSelected = selectedAddons.some(
+                  (selected) => selected.source === addon.source && selected.id === addon.id
+                );
 
                 return (
                   <div
                     key={`${addon.source}_${addon.id}`}
                     className="card-obsidian card-selectable card-tactile p-3.5 rounded-xl border border-white/10 flex items-start gap-3 justify-between hover:border-[var(--mc-accent)] transition-all"
                   >
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${addon.name} for batch installation`}
+                      checked={isSelected}
+                      disabled={isInstalled || !canInstall || isBatchInstalling}
+                      onChange={() => toggleSelectedAddon(addon)}
+                      className="mt-1 h-4 w-4 shrink-0 accent-emerald-500 disabled:opacity-40"
+                      title={canInstall ? undefined : 'Modpacks must be installed individually into new instances.'}
+                    />
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       {addon.iconUrl ? (
                         <img
@@ -674,7 +865,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
                       ) : (
                         <button
                           type="button"
-                          disabled={isInstalling || !canInstall}
+                          disabled={isInstalling || isBatchInstalling || !canInstall}
                           onClick={() => handleInstallAddon(addon)}
                           title={canInstall ? undefined : 'Modpacks need a dedicated instance.'}
                           className="btn-mc btn-mc-green flex items-center gap-1.5 px-3 py-1.5 text-xs text-white font-black rounded cursor-pointer font-display shadow-md disabled:opacity-50"

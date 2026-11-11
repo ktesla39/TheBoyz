@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Settings,
   Folder,
@@ -60,6 +60,7 @@ import {
   invokeClearCurseForgeApiKey,
   invokeCurseForgeKeyStatus,
   invokeSaveCurseForgeApiKey,
+  invokeApplyLauncherIcon,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 
@@ -102,6 +103,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [curseForgeKeyInput, setCurseForgeKeyInput] = useState('');
   const [curseForgeKeyError, setCurseForgeKeyError] = useState<string | null>(null);
   const [curseForgeKeySaving, setCurseForgeKeySaving] = useState(false);
+  const [launcherIconApplying, setLauncherIconApplying] = useState(false);
+  const [launcherIconMessage, setLauncherIconMessage] = useState<string | null>(null);
+  const launcherIconPreviewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isTauriEnvironment()) return;
@@ -219,6 +223,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setLocalSettings(updated);
     applyLiveChanges(updated);
     setCustomIconUrlInput('');
+  };
+
+  const handleApplySystemLauncherIcon = async () => {
+    if (!isTauriEnvironment()) {
+      setLauncherIconMessage('Applying the Windows app icon requires the desktop launcher.');
+      return;
+    }
+
+    setLauncherIconApplying(true);
+    setLauncherIconMessage(null);
+    let temporarySvgUrl: string | null = null;
+    try {
+      let imageSource = localSettings.launcherIcon ?? 'default';
+      if (!imageSource.startsWith('data:image/') && !/^https:\/\//i.test(imageSource)) {
+        const svg = launcherIconPreviewRef.current?.querySelector('svg');
+        if (!svg) throw new Error('Could not render the selected launcher icon.');
+        const svgCopy = svg.cloneNode(true) as SVGSVGElement;
+        svgCopy.setAttribute('width', '256');
+        svgCopy.setAttribute('height', '256');
+        svgCopy.removeAttribute('class');
+        temporarySvgUrl = URL.createObjectURL(
+          new Blob([new XMLSerializer().serializeToString(svgCopy)], {
+            type: 'image/svg+xml;charset=utf-8',
+          })
+        );
+        imageSource = temporarySvgUrl;
+      }
+
+      const image = new Image();
+      if (/^https:\/\//i.test(imageSource)) image.crossOrigin = 'anonymous';
+      image.src = imageSource;
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('Could not load the selected launcher icon image.'));
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not prepare the launcher icon image.');
+      const scale = Math.min(224 / image.naturalWidth, 224 / image.naturalHeight);
+      const width = Math.round(image.naturalWidth * scale);
+      const height = Math.round(image.naturalHeight * scale);
+      context.drawImage(image, (256 - width) / 2, (256 - height) / 2, width, height);
+      const pngDataUrl = canvas.toDataURL('image/png');
+      const encodedPng = pngDataUrl.slice(pngDataUrl.indexOf(',') + 1);
+      const updatedShortcuts = await invokeApplyLauncherIcon(encodedPng);
+      playMinecraftLevelUpSound();
+      setLauncherIconMessage(
+        `Applied to the running app and ${updatedShortcuts} Start Menu/Desktop shortcut${updatedShortcuts === 1 ? '' : 's'}. Windows may take a moment to refresh cached icons.`
+      );
+    } catch (reason) {
+      setLauncherIconMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (temporarySvgUrl) URL.revokeObjectURL(temporarySvgUrl);
+      setLauncherIconApplying(false);
+    }
   };
 
   const handleToggleLowSpec = (checked: boolean) => {
@@ -366,7 +428,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* Active Icon Showcase Badge */}
         <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500/20 to-black/70 border-2 border-emerald-500/40 flex items-center justify-center shrink-0 shadow-md">
+            <div ref={launcherIconPreviewRef} className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500/20 to-black/70 border-2 border-emerald-500/40 flex items-center justify-center shrink-0 shadow-md">
               {localSettings.launcherIcon && (localSettings.launcherIcon.startsWith('data:') || localSettings.launcherIcon.startsWith('http')) ? (
                 <img
                   src={localSettings.launcherIcon}
@@ -396,16 +458,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {localSettings.launcherIcon && localSettings.launcherIcon !== 'default' && (
+          <div className="flex flex-wrap items-center gap-2">
+            {localSettings.launcherIcon && localSettings.launcherIcon !== 'default' && (
+              <button
+                type="button"
+                onClick={() => handleLauncherIconSelect('default')}
+                className="btn-mc px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded cursor-pointer shrink-0 font-display"
+              >
+                Reset to Default
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => handleLauncherIconSelect('default')}
-              className="btn-mc px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded cursor-pointer shrink-0 font-display"
+              onClick={() => void handleApplySystemLauncherIcon()}
+              disabled={launcherIconApplying}
+              className="btn-mc btn-mc-green flex shrink-0 items-center gap-1.5 rounded px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
             >
-              Reset to Default
+              {launcherIconApplying ? (
+                <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Monitor className="h-3.5 w-3.5" />
+              )}
+              <span>{launcherIconApplying ? 'Applying…' : 'Apply App Icon'}</span>
             </button>
-          )}
+          </div>
         </div>
+        {launcherIconMessage && (
+          <p role="status" className="text-xs font-mono text-emerald-300">
+            {launcherIconMessage}
+          </p>
+        )}
+        <p className="text-[11px] text-slate-400 font-mono">
+          Applies to the running window, tray, and launcher shortcuts in Start Menu and Desktop. The installed executable and already-pinned taskbar icons keep their embedded icon.
+        </p>
 
         {/* Preset Icons Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-5 gap-2.5">

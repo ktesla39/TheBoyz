@@ -1467,6 +1467,16 @@ input[type="radio"] {
   box-shadow: none !important;
 }
 
+@keyframes launcher-spinner-rotation {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.low-spec-mode .animate-spin {
+  animation: launcher-spinner-rotation 1s linear infinite !important;
+}
+
 .low-spec-mode body {
   background-image: none !important;
 }

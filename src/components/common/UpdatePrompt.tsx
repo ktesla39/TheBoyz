@@ -52,7 +52,7 @@ export function UpdatePrompt() {
     if (!foundUpdate) {
       try {
         const ghInfo = await invokeCheckGithubLauncherUpdate();
-        if (ghInfo && ghInfo.has_update && ghInfo.download_url) {
+        if (ghInfo && ghInfo.has_update && ghInfo.download_url && ghInfo.sha256) {
           setNotice({ kind: 'github_available', info: ghInfo });
         }
       } catch (reason) {
@@ -159,7 +159,7 @@ export function UpdatePrompt() {
     }
   };
 
-  const installGithubUpdate = async (downloadUrl: string) => {
+  const installGithubUpdate = async (downloadUrl: string, sha256: string) => {
     playMinecraftClickSound();
     setNotice({
       kind: 'installing',
@@ -168,7 +168,7 @@ export function UpdatePrompt() {
       totalBytes: null,
     });
     try {
-      await invokeApplyGithubLauncherUpdate(downloadUrl);
+      await invokeApplyGithubLauncherUpdate(downloadUrl, sha256);
       playMinecraftLevelUpSound();
     } catch (reason) {
       setNotice({
@@ -389,8 +389,8 @@ export function UpdatePrompt() {
                 onClick={() => {
                   if (notice.kind === 'available') {
                     void installUpdate(notice.update);
-                  } else if (notice.kind === 'github_available' && notice.info.download_url) {
-                    void installGithubUpdate(notice.info.download_url);
+                  } else if (notice.kind === 'github_available' && notice.info.download_url && notice.info.sha256) {
+                    void installGithubUpdate(notice.info.download_url, notice.info.sha256);
                   }
                 }}
                 type="button"

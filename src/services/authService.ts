@@ -6,6 +6,12 @@ import {
   SkinModel,
 } from '../types/auth';
 
+const MICROSOFT_AUTH_SCOPES = 'XboxLive.signin offline_access';
+
+function microsoftOAuthForm(parameters: Record<string, string>): URLSearchParams {
+  return new URLSearchParams({ ...parameters, scope: MICROSOFT_AUTH_SCOPES });
+}
+
 /**
  * Generates an offline Minecraft UUID based on the standard UUID v3 formula:
  * MD5("OfflinePlayer:" + username) with version 3 and variant 1 bits set.
@@ -249,9 +255,8 @@ export function validateAndProcessSkinFile(file: File): Promise<{
  */
 export async function requestMicrosoftDeviceCode(): Promise<DeviceCodeResponse> {
   const clientId = requireMicrosoftClientId();
-  const params = new URLSearchParams({
+  const params = microsoftOAuthForm({
     client_id: clientId,
-    scope: 'XboxLive.signin offline_access',
   });
   const response = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode', {
     method: 'POST',
@@ -315,7 +320,7 @@ export async function completeMicrosoftLogin(
     const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      body: microsoftOAuthForm({
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         client_id: clientId,
         device_code: deviceCode.device_code,
@@ -352,11 +357,10 @@ export async function refreshMicrosoftAccount(
   const response = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+    body: microsoftOAuthForm({
       grant_type: 'refresh_token',
       client_id: clientId,
       refresh_token: refreshToken,
-      scope: 'XboxLive.signin offline_access',
     }),
     signal: AbortSignal.timeout(30_000),
   });

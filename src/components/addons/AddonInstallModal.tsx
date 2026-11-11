@@ -78,32 +78,41 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
   );
   const [installDependencies, setInstallDependencies] = useState(true);
   const [isInstalling, setIsInstalling] = useState(false);
-  const [isCreatingInline, setIsCreatingInline] = useState(false);
+  const [isCreatingInline, setIsCreatingInline] = useState(addon?.type === 'modpack');
   const [createError, setCreateError] = useState<string | null>(null);
 
   // New Instance Form state
   const bestVersion = addon?.gameVersions[0] ?? '';
-  const bestLoader = getModLoader(addon?.loaders?.[0]) || 'vanilla';
+  const usesAddonLoader = addon?.type === 'mod' || addon?.type === 'modpack';
+  const bestLoader = usesAddonLoader
+    ? getModLoader(addon?.loaders?.[0]) || 'vanilla'
+    : 'vanilla';
   const [newInstanceName, setNewInstanceName] = useState(addon ? `${addon.name} Profile` : '');
   const [newInstanceVersion, setNewInstanceVersion] = useState(bestVersion);
   const [newInstanceLoader, setNewInstanceLoader] = useState<ModLoaderType>(bestLoader);
 
   useEffect(() => {
     setSelectedInstanceId(activeInstanceId ?? '');
+    setIsCreatingInline(addon?.type === 'modpack');
     setNewInstanceName(addon ? `${addon.name} Profile` : '');
     setNewInstanceVersion(addon?.gameVersions[0] ?? '');
-    setNewInstanceLoader(getModLoader(addon?.loaders?.[0]) || 'vanilla');
+    setNewInstanceLoader(
+      addon?.type === 'mod' || addon?.type === 'modpack'
+        ? getModLoader(addon?.loaders?.[0]) || 'vanilla'
+        : 'vanilla'
+    );
     setCreateError(null);
-  }, [addon?.id, activeInstanceId]);
+  }, [addon?.id, addon?.type, activeInstanceId]);
 
   if (!isOpen || !addon) return null;
 
   const currentSelected = instances.find((i) => i.id === selectedInstanceId) ?? null;
   const supportedVersions = addon.gameVersions;
-  const reportedLoaders = addon.loaders
+  const usesAddonLoaders = addon.type === 'mod' || addon.type === 'modpack';
+  const reportedLoaders = usesAddonLoaders ? addon.loaders
     ?.map(getModLoader)
     .filter((loader, index, loaders): loader is ModLoaderType => Boolean(loader) && loaders.indexOf(loader) === index)
-    ?? [];
+    ?? [] : [];
   const supportedLoaders = reportedLoaders.length > 0 ? reportedLoaders : ['vanilla' as const];
 
   // Calculate compatibility for an arbitrary instance
@@ -244,8 +253,8 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                 <label className="text-xs font-bold text-slate-300 font-mono uppercase tracking-wider">
                   Select Target Instance ({instances.length})
                 </label>
-                {supportedVersions.length > 0 && (
-                <button
+                {supportedVersions.length > 0 && addon.type !== 'modpack' && (
+                  <button
                   type="button"
                   onClick={() => {
                     playMinecraftClickSound();
@@ -255,7 +264,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>+ Create New Instance for this Addon</span>
-                </button>
+                  </button>
                 )}
               </div>
 
@@ -372,14 +381,20 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                   <Sparkles className="w-4 h-4 text-emerald-400" />
                   <span>Configure New Compatible Instance</span>
                 </span>
-                <button
+                {addon.type !== 'modpack' && <button
                   type="button"
                   onClick={() => setIsCreatingInline(false)}
                   className="text-xs text-slate-400 hover:text-white font-mono cursor-pointer"
                 >
                   Back to Existing
-                </button>
+                </button>}
               </div>
+
+              {addon.type === 'modpack' && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                  Modpacks must be installed into a new instance. Choose its name, Minecraft version, and loader below.
+                </p>
+              )}
 
               <div className="space-y-3">
                 <div>
@@ -411,7 +426,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                     )}
                   </div>
 
-                  <div>
+                  {usesAddonLoaders ? <div>
                     <label className="block text-[11px] font-mono text-slate-400 mb-1">Mod Loader</label>
                     <select
                       value={newInstanceLoader}
@@ -427,7 +442,11 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                     {supportedLoaders.length === 0 && (
                       <p className="mt-1 text-[10px] text-amber-300">No supported loader was reported.</p>
                     )}
-                  </div>
+                  </div> : (
+                    <div className="flex items-center rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs font-mono text-slate-300">
+                      This pack does not require a mod loader. The new instance will use Vanilla.
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-[11px] text-emerald-400 font-mono bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20">

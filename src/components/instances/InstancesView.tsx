@@ -69,7 +69,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
       const selectedPath = await open({
         directory: true,
         multiple: false,
-        title: 'Select a Minecraft instance or game directory',
+        title: 'Select a Minecraft instance, game directory, or versions profile folder',
       });
       if (!selectedPath || Array.isArray(selectedPath)) return;
       setIsImporting(true);
@@ -109,7 +109,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
             onClick={() => void handleImportInstance()}
             disabled={isImporting}
             className="btn-mc flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display disabled:opacity-50"
-            title="Copy mods, saves, configurations, and game options from SKLauncher, HMCL, or another launcher"
+            title="Import a launcher instance, game directory, or versions/profile folder from SKLauncher, HMCL, or another launcher"
           >
             {isImporting ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
             <span>{isImporting ? 'Importing…' : 'Import Instance'}</span>

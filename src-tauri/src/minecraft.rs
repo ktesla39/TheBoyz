@@ -159,12 +159,13 @@ fn os_arch() -> &'static str {
 fn resolve_game_dir(
     root: &Path,
     instance_id: &str,
+    instance_name: &str,
     custom_dir: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let path = custom_dir
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("instances").join(instance_id));
+    let path = match custom_dir.filter(|path| !path.trim().is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => super::resolve_instance_directory(root, instance_id, Some(instance_name))?,
+    };
     if path.as_os_str().is_empty() {
         return Err("The game directory cannot be empty.".to_string());
     }
@@ -1255,7 +1256,11 @@ pub async fn install_instance(root: &Path, request: InstallRequest) -> Result<St
     if matches!(request.loader.as_str(), "fabric" | "quilt") {
         install_profile_libraries(&client, root, &request.game_version, &installed).await?;
     }
-    let instance_dir = root.join("instances").join(&request.instance_id);
+    let instance_dir = super::resolve_instance_directory(
+        root,
+        &request.instance_id,
+        Some(&request.instance_name),
+    )?;
     for directory in ["mods", "resourcepacks", "shaderpacks", "saves"] {
         tokio::fs::create_dir_all(instance_dir.join(directory))
             .await
@@ -1264,6 +1269,7 @@ pub async fn install_instance(root: &Path, request: InstallRequest) -> Result<St
     tokio::fs::create_dir_all(resolve_game_dir(
         root,
         &request.instance_id,
+        &request.instance_name,
         request.custom_game_dir.as_deref(),
     )?)
     .await
@@ -1300,7 +1306,11 @@ pub async fn install_instance(root: &Path, request: InstallRequest) -> Result<St
 }
 
 fn installation_is_complete(root: &Path, request: &InstallRequest) -> Result<bool, String> {
-    let instance_dir = root.join("instances").join(&request.instance_id);
+    let instance_dir = super::resolve_instance_directory(
+        root,
+        &request.instance_id,
+        Some(&request.instance_name),
+    )?;
     let marker_path = instance_dir.join("launch-profile.json");
     let marker_bytes = match fs::read(&marker_path) {
         Ok(bytes) => bytes,
@@ -1472,7 +1482,11 @@ pub fn prepare_launch(
 ) -> Result<PreparedLaunch, String> {
     validate_component(&request.instance_id, "instance ID")?;
     validate_component(&request.game_version, "Minecraft version")?;
-    let instance_dir = root.join("instances").join(&request.instance_id);
+    let instance_dir = super::resolve_instance_directory(
+        root,
+        &request.instance_id,
+        Some(&request.instance_name),
+    )?;
     let launch_profile: Value = serde_json::from_slice(
         &fs::read(instance_dir.join("launch-profile.json"))
             .map_err(|_| "Install this Minecraft instance before launching it.".to_string())?,
@@ -1515,6 +1529,7 @@ pub fn prepare_launch(
     let game_dir = resolve_game_dir(
         root,
         &request.instance_id,
+        &request.instance_name,
         request.custom_game_dir.as_deref(),
     )?;
     let quick_play_path = game_dir.join("quickPlay");

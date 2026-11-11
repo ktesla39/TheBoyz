@@ -34,6 +34,7 @@ This is the first end-to-end implementation and is **not yet release-certified**
 ### 🕹️ Universal Instance Management
 - **Full Mod Loader Support**: Supports **Vanilla**, **Fabric**, **Forge**, **NeoForge**, and **Quilt**.
 - **Isolated Environments**: Each instance runs with its own isolated directory structure (`mods`, `resourcepacks`, `shaderpacks`, `saves`, `configs`).
+- **Launcher Imports**: Import HMCL, SKLauncher, and compatible Minecraft profile folders; personal game data is copied into launcher-managed instance storage.
 - **Fine-grained JVM Controls**: Memory heap allocation sliders (Min/Max RAM), custom JVM arguments, and automated GC tuning presets (Aikar's G1GC, Shenandoah, and Low-RAM Potato Mode).
 - **1-Click Cloning & Desktop Shortcuts**: Instant instance duplication and automated Windows `.bat`/`.lnk` desktop shortcut generation.
 
@@ -48,7 +49,7 @@ This is the first end-to-end implementation and is **not yet release-certified**
 - **10 Button Color Themes**: Emerald Classic, Glacial Diamond, Redstone Crimson, Nether Gold, Ender Void, Raw Copper, Lapis Lazuli, Obsidian Carbon, Netherite Steel, and Prismarine Teal.
 - **Dynamic Hex Color Engine**: Fine-tune any button or accent color with the built-in color wheel; the dynamic shader engine automatically calculates highlights and shadow bevels.
 - **Atmospheric Background Themes**: 9 immersive launcher environments including *Obsidian Dark, Emerald Grove, Glacial Diamond, Nether Crimson, Ender Void, Redstone Core, Cyber Matrix, Deepslate Classic, and OLED Pure Black*.
-- **Brand Icon Customization**: Choose from 17 pixel-art Minecraft icons, upload your own local image, or paste an icon URL.
+- **Brand Icon Customization**: Choose from 17 pixel-art Minecraft icons, upload your own local image, or paste an icon URL. Apply it to the running window, tray, and Windows shortcuts from Settings.
 
 ### 🛡️ Dual Authentication & 3D Skin Studio
 - **Dual Auth Engine**: Seamless support for both **Microsoft Online Accounts** (OAuth 2.0) and **Offline Profiles** (Ely.by skinsystem integration).
@@ -57,7 +58,7 @@ This is the first end-to-end implementation and is **not yet release-certified**
 ### 📦 Integrated Modrinth & CurseForge Discovery
 - Search and filter thousands of mods, modpacks, resource packs, and shaders directly inside the launcher.
 - Automatic version compatibility checking and dependency resolution.
-- CurseForge requires a personal API key, entered in Launcher Settings and stored in the operating system credential store. The GitHub Actions secret validates release builds but is not embedded in distributed binaries.
+- CurseForge requires a personal API key, entered in Launcher Settings and stored in the operating system credential store. A local `.env` key is used only for development; an optional GitHub Actions secret is used only for release preflight and is never embedded in distributed binaries.
 - Browse the official Minecraft version catalog with search, filters, and 25 versions per page.
 
 ---
@@ -181,7 +182,7 @@ npm run build
 Set `VITE_GITHUB_REPOSITORY=ktesla39/the-boyz` in the root `.env` to enable the website's download button. It checks published GitHub releases (including prereleases), finds the newest Windows `.exe` installer, and links directly to that asset instead of opening the GitHub release page.
 
 ### Signed automatic updates and GitHub Releases
-The launcher checks the latest GitHub Release in the desktop app and offers the update before installing it. Releases are built for Windows by `.github/workflows/release.yml`; push a version tag such as `v1.0.1` to publish a signed NSIS installer and the updater's `latest.json`.
+The launcher checks the latest GitHub Release in the desktop app and offers the update before installing it. Releases are built for Windows by `.github/workflows/release.yml`; push a version tag such as `v1.1.3` to publish a signed NSIS installer and the updater's `latest.json`.
 
 Create a Tauri updater signing key locally. Keep the private key and password secret:
 

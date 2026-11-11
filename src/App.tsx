@@ -55,6 +55,9 @@ import {
   invokeClearMicrosoftCredentials,
   invokeGetSystemHardware,
   invokeImportMinecraftInstance,
+  invokeCreateInstance,
+  invokeDeleteInstance,
+  invokeRenameInstanceFolder,
   invokeIsGameRunning,
   invokeLaunchGame,
   invokeStopGame,
@@ -93,6 +96,30 @@ export default function App() {
   );
   const [isFirstRunOfflineModalOpen, setIsFirstRunOfflineModalOpen] = useState(false);
   const [isFirstRunMicrosoftModalOpen, setIsFirstRunMicrosoftModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    let active = true;
+    void (async () => {
+      for (const instance of instances) {
+        if (!active || instance.customGameDir) continue;
+        try {
+          await invokeRenameInstanceFolder(instance.id, instance.name);
+        } catch (reason) {
+          if (active) {
+            window.alert(
+              `Could not migrate the folder for "${instance.name}". Existing data was left in place. ${
+                reason instanceof Error ? reason.message : String(reason)
+              }`
+            );
+          }
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (isFirstRunAccountChoiceOpen) {
@@ -631,7 +658,10 @@ export default function App() {
   }, [gamePid]);
 
   // Instance Actions
-  const handleAddInstance = (newInst: MinecraftInstance) => {
+  const handleAddInstance = async (newInst: MinecraftInstance) => {
+    if (isTauriEnvironment()) {
+      await invokeCreateInstance(newInst.id, newInst.name, newInst.gameVersion, newInst.loader);
+    }
     setInstances((prev) => [newInst, ...prev]);
     setActiveInstanceId(newInst.id);
   };
@@ -673,11 +703,23 @@ export default function App() {
       totalPlayTimeMinutes: 0,
       customGameDir: imported.custom_game_dir,
     };
-    handleAddInstance(instance);
+    await handleAddInstance(instance);
   };
 
-  const handleDeleteInstance = (id: string) => {
+  const handleDeleteInstance = async (id: string) => {
     if (instances.length <= 1) return;
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteInstance(id);
+      }
+    } catch (reason) {
+      window.alert(
+        `Could not delete the instance folder. The instance was kept in the launcher. ${
+          reason instanceof Error ? reason.message : String(reason)
+        }`
+      );
+      return;
+    }
     const remaining = instances.filter((i) => i.id !== id);
     setInstances(remaining);
     if (activeInstanceId === id) {
@@ -693,6 +735,7 @@ export default function App() {
       ...target,
       id: `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       name: `${target.name} (Copy)`,
+      customGameDir: undefined,
       createdAt: Date.now(),
       totalPlayTimeMinutes: 0,
       mods: [...target.mods],
@@ -701,11 +744,34 @@ export default function App() {
       screenshots: target.screenshots ? [...target.screenshots] : [],
       backups: target.backups ? [...target.backups] : [],
     };
-    setInstances((prev) => [cloned, ...prev]);
-    setActiveInstanceId(cloned.id);
+    void handleAddInstance(cloned).catch((reason) => {
+      window.alert(`Could not clone the instance profile: ${reason instanceof Error ? reason.message : String(reason)}`);
+    });
   };
 
   const handleUpdateInstance = (updated: MinecraftInstance) => {
+    const current = instances.find((instance) => instance.id === updated.id);
+    if (
+      current &&
+      current.name !== updated.name &&
+      !updated.customGameDir &&
+      isTauriEnvironment()
+    ) {
+      void invokeRenameInstanceFolder(updated.id, updated.name)
+        .then(() => {
+          setInstances((prev) =>
+            prev.map((instance) => instance.id === updated.id ? updated : instance)
+          );
+        })
+        .catch((reason) => {
+          window.alert(
+            `Could not rename the instance folder. The instance name was not changed. ${
+              reason instanceof Error ? reason.message : String(reason)
+            }`
+          );
+        });
+      return;
+    }
     setInstances((prev) =>
       prev.map((inst) => (inst.id === updated.id ? updated : inst))
     );
@@ -821,8 +887,11 @@ export default function App() {
       createdAt: Date.now(),
       totalPlayTimeMinutes: 0,
     };
-    handleAddInstance(newInst);
-    setCurrentTab('home');
+    void handleAddInstance(newInst)
+      .then(() => setCurrentTab('home'))
+      .catch((reason) => {
+        window.alert(`Could not create the instance: ${reason instanceof Error ? reason.message : String(reason)}`);
+      });
   };
 
   return (
@@ -1069,8 +1138,7 @@ export default function App() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onInstanceCreated={(newInstance) => {
-          handleAddInstance(newInstance);
-          setIsCreateModalOpen(false);
+          return handleAddInstance(newInstance).then(() => setIsCreateModalOpen(false));
         }}
       />
 

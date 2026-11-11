@@ -54,6 +54,7 @@ import {
   invokeImportLocalAddonFiles,
   invokeToggleInstanceAddon,
   invokeToggleModFile,
+  invokeOpenInstanceFolder,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 
@@ -340,7 +341,16 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
 
           <button
             type="button"
-            onClick={() => showToast(`Instance location: ${instance.customGameDir || `.minecraft/instances/${instance.id}`}`)}
+            onClick={() => {
+              if (!isTauriEnvironment()) {
+                showToast('Opening instance folders is available in the desktop launcher.');
+                return;
+              }
+              void invokeOpenInstanceFolder(instance.id, instance.name, instance.customGameDir)
+                .catch((reason) => {
+                  showToast(`Could not open instance folder: ${reason instanceof Error ? reason.message : String(reason)}`);
+                });
+            }}
             className="btn-mc flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-300 rounded cursor-pointer font-display"
             title="Open Instance Folder"
           >
@@ -682,7 +692,7 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
             </div>
 
             <button
-              onClick={() => showToast(`World directory: ${instance.customGameDir || `.minecraft/instances/${instance.id}`}/saves`)}
+              onClick={() => showToast(`World directory: ${instance.customGameDir || `.minecraft/instances/${instance.name}`}/saves`)}
               className="btn-tactile-dark flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-400 rounded-lg cursor-pointer font-display"
             >
               <Upload className="w-3.5 h-3.5" />
@@ -1081,7 +1091,7 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
                     customGameDir: e.target.value.trim() ? e.target.value : undefined,
                   })
                 }
-                placeholder="Default: .minecraft/instances/[instance_id]"
+                placeholder="Default: .minecraft/instances/[instance_name]"
                 className="w-full px-3 py-2 bg-black/50 border border-white/10 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
               />
               <p className="text-[11px] text-slate-400 font-mono mt-1">

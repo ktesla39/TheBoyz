@@ -28,7 +28,7 @@ export function detectSystemHardware(): SystemHardwareInfo {
     gpuVendor,
     gpuRenderer,
     supportedApis: {
-      opengl: Boolean(gl),
+      opengl: null,
       vulkan: null,
       directx12: null,
     },
@@ -44,13 +44,19 @@ export function getGraphicsApiReport(api: string, hardware: SystemHardwareInfo):
 } {
   switch (api) {
     case 'opengl':
-      return {
-        status: hardware.supportedApis.opengl ? 'recommended' : 'unsupported',
-        title: 'OpenGL (Standard Native Pipeline)',
-        notes: hardware.supportedApis.opengl
-          ? 'Standard Minecraft rendering environment. The browser reports a WebGL graphics context.'
-          : 'No WebGL graphics context was detected by the current environment.',
-      };
+      return hardware.supportedApis.opengl === null
+        ? {
+            status: 'experimental',
+            title: 'OpenGL (Standard Native Pipeline)',
+            notes: 'The launcher cannot reliably probe the native OpenGL driver from its browser context. Minecraft verifies OpenGL support when it starts.',
+          }
+        : {
+            status: hardware.supportedApis.opengl ? 'recommended' : 'unsupported',
+            title: 'OpenGL (Standard Native Pipeline)',
+            notes: hardware.supportedApis.opengl
+              ? 'The native graphics adapter reports OpenGL support.'
+              : 'No native OpenGL support was reported.',
+          };
     case 'vulkan':
       return hardware.supportedApis.vulkan
         ? {

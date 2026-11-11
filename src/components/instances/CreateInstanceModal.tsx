@@ -8,7 +8,6 @@ import {
   Terminal,
   Cpu,
   Monitor,
-  Zap,
   Shield,
   Layers,
   Wrench,
@@ -33,7 +32,7 @@ import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../servic
 interface CreateInstanceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onInstanceCreated: (instance: MinecraftInstance) => void;
+  onInstanceCreated: (instance: MinecraftInstance) => void | Promise<void>;
 }
 
 export const INSTANCE_ICON_PRESETS = [
@@ -102,6 +101,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
   const [manifest, setManifest] = useState<MojangVersionManifest | null>(null);
   const [loadingVersions, setLoadingVersions] = useState(true);
   const [manifestError, setManifestError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [manifestRequestId, setManifestRequestId] = useState(0);
 
   useEffect(() => {
@@ -148,60 +148,6 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
     if (recJava !== null) setJavaVersion(recJava);
   }, [gameVersion]);
 
-  // Quick preset template applicator
-  const applyStarterTemplate = (type: 'performance' | 'vanilla' | 'tech' | 'pvp') => {
-    playMinecraftClickSound();
-    const latestRelease = manifest?.latest.release;
-    if (!latestRelease) {
-      setManifestError('Load the official Minecraft version manifest before applying a starter template.');
-      return;
-    }
-    if (type === 'performance') {
-      setName('Fabric Performance Engine');
-      setLoader('fabric');
-      setGameVersion(latestRelease);
-      setLoaderVersion('');
-      setSelectedIcon('diamond_sword');
-      setMaxRamMb(4096);
-      setMinRamMb(2048);
-      setGarbageCollector('G1GC');
-      setCustomJvmArgs(
-        '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch'
-      );
-    } else if (type === 'vanilla') {
-      setName('Pure Vanilla');
-      setLoader('vanilla');
-      setGameVersion(latestRelease);
-      setSelectedIcon('grass_block');
-      setMaxRamMb(3072);
-      setMinRamMb(1024);
-      setGarbageCollector('G1GC');
-      setCustomJvmArgs('-XX:+UseG1GC -XX:+ParallelRefProcEnabled');
-    } else if (type === 'tech') {
-      setName('NeoForge Automation Factory');
-      setLoader('neoforge');
-      setLoaderVersion('');
-      setGameVersion(latestRelease);
-      setSelectedIcon('crafting_table');
-      setMaxRamMb(6144);
-      setMinRamMb(3072);
-      setGarbageCollector('G1GC');
-      setCustomJvmArgs(
-        '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=250 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC'
-      );
-    } else if (type === 'pvp') {
-      setName('Competitive PvP Arena');
-      setLoader('fabric');
-      setGameVersion(latestRelease);
-      setLoaderVersion('');
-      setSelectedIcon('ender_eye');
-      setMaxRamMb(4096);
-      setMinRamMb(2048);
-      setGarbageCollector('Shenandoah');
-      setCustomJvmArgs('-XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=adaptive');
-    }
-  };
-
   const handleRandomizeName = () => {
     playMinecraftClickSound();
     const random = RANDOM_NAMES[Math.floor(Math.random() * RANDOM_NAMES.length)];
@@ -220,13 +166,12 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loadingVersions || !manifest || !gameVersion) {
+    if (isCreating || loadingVersions || !manifest || !gameVersion) {
       setManifestError('A Minecraft version from the official manifest is required to create an instance.');
       return;
     }
-    playMinecraftLevelUpSound();
 
     const parsedJvmArgs = customJvmArgs.trim().split(/\s+/).filter(Boolean);
 
@@ -261,8 +206,16 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
       totalPlayTimeMinutes: 0,
     };
 
-    onInstanceCreated(newInst);
-    onClose();
+    setIsCreating(true);
+    try {
+      await onInstanceCreated(newInst);
+      playMinecraftLevelUpSound();
+      onClose();
+    } catch (reason) {
+      setManifestError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -302,42 +255,6 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
             className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Quick Starter Presets Bar */}
-        <div className="px-6 py-2.5 bg-black/40 border-b border-white/5 flex items-center gap-2 overflow-x-auto shrink-0 scrollbar-none">
-          <span className="text-[10px] font-mono uppercase text-slate-400 font-bold shrink-0 flex items-center gap-1">
-            <Zap className="w-3 h-3 text-amber-400" />
-            <span>Starters:</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => applyStarterTemplate('performance')}
-            className="btn-mc btn-mc-diamond px-2.5 py-1 text-[11px] font-bold text-white rounded cursor-pointer shrink-0 truncate"
-          >
-            ⚡ Fabric Performance
-          </button>
-          <button
-            type="button"
-            onClick={() => applyStarterTemplate('vanilla')}
-            className="btn-mc btn-mc-green px-2.5 py-1 text-[11px] font-bold text-white rounded cursor-pointer shrink-0 truncate"
-          >
-            🛡️ Pure Vanilla
-          </button>
-          <button
-            type="button"
-            onClick={() => applyStarterTemplate('tech')}
-            className="btn-mc btn-mc-amber px-2.5 py-1 text-[11px] font-bold text-white rounded cursor-pointer shrink-0 truncate"
-          >
-            ⚙️ NeoForge Tech
-          </button>
-          <button
-            type="button"
-            onClick={() => applyStarterTemplate('pvp')}
-            className="btn-mc px-2.5 py-1 text-[11px] font-bold text-slate-200 rounded cursor-pointer shrink-0 truncate"
-          >
-            ⚔️ PvP Competitive
           </button>
         </div>
 
@@ -903,7 +820,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={loadingVersions || !manifest || !gameVersion}
+                disabled={isCreating || loadingVersions || !manifest || !gameVersion}
                 className="btn-mc btn-mc-green flex items-center gap-2 px-6 py-2 text-white font-black text-xs rounded cursor-pointer font-display shadow-lg disabled:opacity-40"
               >
                 <Check className="w-4 h-4" />

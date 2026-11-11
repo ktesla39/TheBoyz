@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -14,8 +14,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, Wry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use uuid::Uuid;
@@ -23,6 +23,17 @@ use uuid::Uuid;
 mod minecraft;
 
 static RUNNING_PROCESSES: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+const MICROSOFT_AUTH_SCOPES: &str = "XboxLive.signin offline_access";
+
+fn microsoft_oauth_form(parameters: &[(&str, &str)]) -> HashMap<String, String> {
+    let mut form: HashMap<String, String> = parameters
+        .iter()
+        .filter(|(key, _)| *key != "scope")
+        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .collect();
+    form.insert("scope".to_string(), MICROSOFT_AUTH_SCOPES.to_string());
+    form
+}
 
 fn suppress_console_window(command: &mut Command) {
     #[cfg(windows)]
@@ -198,10 +209,139 @@ fn instance_game_dir(
     custom_game_dir: Option<String>,
 ) -> Result<PathBuf, String> {
     validate_instance_id(instance_id)?;
-    Ok(custom_game_dir
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(get_app_data_dir()?.join("instances").join(instance_id)))
+    if let Some(path) = custom_game_dir.filter(|path| !path.trim().is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    resolve_instance_directory(&get_app_data_dir()?, instance_id, None)
+}
+
+fn validate_instance_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    let base_name = trimmed.split('.').next().unwrap_or_default();
+    let reserved_name = matches!(
+        base_name.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    if trimmed.is_empty()
+        || trimmed.len() > 128
+        || trimmed != name
+        || trimmed.ends_with([' ', '.'])
+        || trimmed.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+        })
+        || reserved_name
+    {
+        return Err("Instance names must be valid, unique Windows folder names.".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn resolve_instance_directory(
+    root: &Path,
+    instance_id: &str,
+    instance_name: Option<&str>,
+) -> Result<PathBuf, String> {
+    validate_instance_id(instance_id)?;
+    let instances_dir = root.join("instances");
+    let id_dir = instances_dir.join(instance_id);
+    if id_dir.is_dir() {
+        let metadata_path = id_dir.join("instance.json");
+        if !metadata_path.exists()
+            || fs::read(&metadata_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|metadata| {
+                    metadata
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some(instance_id)
+        {
+            return Ok(id_dir);
+        }
+    }
+    if instances_dir.is_dir() {
+        let entries = fs::read_dir(&instances_dir)
+            .map_err(|error| format!("Could not inspect instance directories: {error}"))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("Could not inspect instance directory: {error}"))?;
+            if !entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                continue;
+            }
+            let candidate = entry.path();
+            let metadata_path = candidate.join("instance.json");
+            let metadata = match fs::read(&metadata_path) {
+                Ok(bytes) => {
+                    serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+                        format!(
+                            "Could not read instance metadata at {}: {error}",
+                            metadata_path.display()
+                        )
+                    })?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "Could not read instance metadata at {}: {error}",
+                        metadata_path.display()
+                    ))
+                }
+            };
+            if metadata.get("id").and_then(serde_json::Value::as_str) == Some(instance_id) {
+                return Ok(candidate);
+            }
+        }
+    }
+    match instance_name {
+        Some(name) => {
+            validate_instance_name(name)?;
+            Ok(instances_dir.join(name))
+        }
+        None => Ok(id_dir),
+    }
+}
+
+fn instance_game_dir_named(
+    instance_id: &str,
+    instance_name: &str,
+    custom_game_dir: Option<String>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = custom_game_dir.filter(|path| !path.trim().is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    resolve_instance_directory(&get_app_data_dir()?, instance_id, Some(instance_name))
 }
 
 fn validate_mod_file_name(file_name: &str) -> Result<(), String> {
@@ -228,6 +368,44 @@ fn addon_folder(addon_type: &str) -> Result<&'static str, String> {
         ),
         _ => Err(format!("Unsupported addon type: {addon_type}")),
     }
+}
+
+fn world_datapack_dirs(instance_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let saves_dir = instance_dir.join("saves");
+    if !saves_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(&saves_dir).map_err(|error| {
+        format!(
+            "Could not inspect worlds in {}: {error}",
+            saves_dir.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("Could not inspect a world folder: {error}"))?;
+        if entry
+            .file_type()
+            .map_err(|error| format!("Could not inspect a world folder: {error}"))?
+            .is_dir()
+        {
+            directories.push(entry.path().join("datapacks"));
+        }
+    }
+    Ok(directories)
+}
+
+fn datapack_file_paths(instance_dir: &Path, file_name: &str) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    let legacy_dir = instance_dir.join("datapacks");
+    if legacy_dir.is_dir() {
+        paths.push(legacy_dir.join(file_name));
+    }
+    paths.extend(
+        world_datapack_dirs(instance_dir)?
+            .into_iter()
+            .map(|directory| directory.join(file_name)),
+    );
+    Ok(paths)
 }
 
 fn validate_addon_file_name(
@@ -264,54 +442,55 @@ struct ImportedAddonFile {
     size_bytes: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct CurseForgeSearchResponse {
     data: Vec<CurseForgeMod>,
     pagination: CurseForgePagination,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgePagination {
     total_count: u32,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgeMod {
     id: u32,
     name: String,
     slug: String,
-    summary: String,
+    summary: Option<String>,
     download_count: u64,
     class_id: Option<u32>,
     logo: Option<CurseForgeLogo>,
-    authors: Vec<CurseForgeAuthor>,
-    latest_files_indexes: Vec<CurseForgeLatestFileIndex>,
+    authors: Option<Vec<CurseForgeAuthor>>,
+    latest_files_indexes: Option<Vec<CurseForgeLatestFileIndex>>,
     links: Option<CurseForgeLinks>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgeLogo {
-    url: String,
+    url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgeAuthor {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgeLatestFileIndex {
-    game_version: String,
+    game_version: Option<String>,
     mod_loader: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct CurseForgeLinks {
     website_url: Option<String>,
 }
@@ -319,6 +498,36 @@ struct CurseForgeLinks {
 fn curseforge_key_entry() -> Result<Entry, String> {
     Entry::new("TheBoysLauncher", "curseforge_api_key")
         .map_err(|error| format!("Could not access the OS credential store: {error}"))
+}
+
+async fn curseforge_api_error(action: &str, response: reqwest::Response) -> String {
+    let status = response.status();
+    let detail = match response.text().await {
+        Ok(body) => {
+            let body = body.trim();
+            if body.is_empty() {
+                "The API returned an empty error response.".to_string()
+            } else if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+                ["errorMessage", "message", "error", "detail"]
+                    .iter()
+                    .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| body.chars().take(400).collect())
+            } else {
+                body.chars().take(400).collect()
+            }
+        }
+        Err(error) => format!("Could not read the error response: {error}"),
+    };
+    match status.as_u16() {
+        401 => format!(
+            "CurseForge {action} failed (HTTP 401): the API key is invalid or expired. Check the key in Settings. {detail}"
+        ),
+        403 => format!(
+            "CurseForge {action} failed (HTTP 403): this API key is not authorized for the requested resource. Check your CurseForge API access. {detail}"
+        ),
+        _ => format!("CurseForge {action} failed (HTTP {status}): {detail}"),
+    }
 }
 
 fn microsoft_credentials_entry(account_id: &str, field: &str) -> Result<Entry, String> {
@@ -417,13 +626,14 @@ fn clear_microsoft_credentials(account_id: String) -> Result<(), String> {
 }
 
 fn get_curseforge_api_key() -> Result<Option<String>, String> {
-    if cfg!(debug_assertions) {
-        if let Ok(value) = std::env::var("CURSEFORGE_API_KEY") {
-            if !value.trim().is_empty() {
-                return Ok(Some(value.trim().to_string()));
-            }
-        }
+    if let Some(value) = std::env::var("CURSEFORGE_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(Some(value.trim().to_string()));
+    }
 
+    if cfg!(debug_assertions) {
         let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .ok_or_else(|| {
@@ -532,10 +742,7 @@ async fn search_curseforge(
         .await
         .map_err(|error| format!("CurseForge search request failed: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "CurseForge search failed with HTTP status {}.",
-            response.status()
-        ));
+        return Err(curseforge_api_error("search", response).await);
     }
 
     let data: CurseForgeSearchResponse = response
@@ -546,21 +753,22 @@ async fn search_curseforge(
     Ok(serde_json::json!({
         "totalCount": data.pagination.total_count,
         "data": data.data.into_iter().map(|item| {
-            let game_versions: Vec<String> = item.latest_files_indexes.iter()
-                .map(|file| file.game_version.clone())
+            let latest_files_indexes = item.latest_files_indexes.unwrap_or_default();
+            let game_versions: Vec<String> = latest_files_indexes.iter()
+                .filter_map(|file| file.game_version.clone())
                 .collect();
-            let loaders: Vec<u32> = item.latest_files_indexes.iter()
+            let loaders: Vec<u32> = latest_files_indexes.iter()
                 .filter_map(|file| file.mod_loader)
                 .collect();
             serde_json::json!({
                 "id": item.id,
                 "name": item.name,
                 "slug": item.slug,
-                "summary": item.summary,
+                "summary": item.summary.unwrap_or_default(),
                 "downloadCount": item.download_count,
                 "classId": item.class_id,
-                "logoUrl": item.logo.map(|logo| logo.url),
-                "author": item.authors.into_iter().map(|author| author.name).collect::<Vec<_>>().join(", "),
+                "logoUrl": item.logo.and_then(|logo| logo.url),
+                "author": item.authors.unwrap_or_default().into_iter().map(|author| author.name).collect::<Vec<_>>().join(", "),
                 "gameVersions": game_versions,
                 "loaders": loaders,
                 "websiteUrl": item.links.and_then(|links| links.website_url),
@@ -683,7 +891,7 @@ async fn run_graphics_query(program: &str, args: &[&str]) -> Result<String, Stri
 }
 
 #[cfg(target_os = "windows")]
-async fn query_directx_version() -> Result<String, String> {
+async fn query_directx12_feature_levels() -> Result<String, String> {
     let report_path =
         std::env::temp_dir().join(format!("theboys-dxdiag-{}.xml", Uuid::new_v4().simple()));
     let report_arg = report_path.to_string_lossy().into_owned();
@@ -700,30 +908,46 @@ async fn query_directx_version() -> Result<String, String> {
         }
     }
     let report = report?;
-    find_version_line(&report, &["<directxversion>"])
-        .map(|version| {
-            version
-                .split('<')
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string()
-        })
-        .ok_or_else(|| "DirectX version was not present in the dxdiag report.".to_string())
+    let feature_levels = find_version_line(&report, &["<featurelevels>"])
+        .and_then(|levels| levels.split('<').next().map(str::trim).map(str::to_string))
+        .filter(|levels| !levels.is_empty())
+        .ok_or_else(|| "GPU feature levels were not present in the dxdiag report.".to_string())?;
+    if feature_levels
+        .split(',')
+        .map(str::trim)
+        .any(|level| matches!(level, "12_0" | "12_1" | "12_2"))
+    {
+        Ok(format!("Direct3D 12 feature levels: {feature_levels}"))
+    } else {
+        Err(format!(
+            "Direct3D 12 feature level was not detected (reported: {feature_levels})."
+        ))
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
-async fn query_directx_version() -> Result<String, String> {
+async fn query_directx12_feature_levels() -> Result<String, String> {
     Err("DirectX 12 is only available on Windows.".to_string())
 }
 
 /// Queries graphics API version information when explicitly requested by the user.
 #[tauri::command]
 async fn detect_graphics_api_versions() -> Result<GraphicsApiVersions, String> {
+    #[cfg(target_os = "windows")]
+    let (opengl_result, vulkan_result, directx_result): (
+        Result<String, String>,
+        Result<String, String>,
+        Result<String, String>,
+    ) = (
+        Err("Windows diagnostics cannot reliably report native OpenGL support; Minecraft will validate the driver at launch.".to_string()),
+        Err("Vulkan driver support is not queried by Windows system diagnostics.".to_string()),
+        query_directx12_feature_levels().await,
+    );
+    #[cfg(not(target_os = "windows"))]
     let (opengl_result, vulkan_result, directx_result) = tokio::join!(
         run_graphics_query("glxinfo", &["-B"]),
         run_graphics_query("vulkaninfo", &["--summary"]),
-        query_directx_version(),
+        query_directx12_feature_levels(),
     );
     let opengl = opengl_result.and_then(|output| {
         find_version_line(
@@ -1423,7 +1647,6 @@ fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-#[cfg(target_os = "windows")]
 fn validate_shortcut_icon(bytes: &[u8]) -> Result<(), String> {
     const ICO_HEADER_SIZE: usize = 22;
     const MAX_ICON_SIZE: usize = 4 * 1024 * 1024;
@@ -1440,6 +1663,156 @@ fn validate_shortcut_icon(bytes: &[u8]) -> Result<(), String> {
         return Err("The shortcut icon is not a valid single-image PNG icon.".to_string());
     }
     Ok(())
+}
+
+fn build_png_icon(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    if png_bytes.len() < 33
+        || png_bytes.len() > 4 * 1024 * 1024
+        || png_bytes[..8] != PNG_SIGNATURE
+        || &png_bytes[12..16] != b"IHDR"
+        || u32::from_be_bytes(png_bytes[16..20].try_into().unwrap()) != 256
+        || u32::from_be_bytes(png_bytes[20..24].try_into().unwrap()) != 256
+    {
+        return Err(
+            "Launcher icons must be valid PNG images no larger than 256 by 256 pixels.".to_string(),
+        );
+    }
+    let _image = tauri::image::Image::from_bytes(png_bytes)
+        .map_err(|error| format!("The launcher icon is not a valid PNG image: {error}"))?;
+
+    let image_size = u32::try_from(png_bytes.len())
+        .map_err(|_| "The launcher icon image is too large.".to_string())?;
+    let mut icon = vec![0; 22];
+    icon[2..6].copy_from_slice(&[1, 0, 1, 0]);
+    icon[10..12].copy_from_slice(&1u16.to_le_bytes());
+    icon[12..14].copy_from_slice(&32u16.to_le_bytes());
+    icon[14..18].copy_from_slice(&image_size.to_le_bytes());
+    icon[18..22].copy_from_slice(&22u32.to_le_bytes());
+    icon.extend_from_slice(png_bytes);
+    validate_shortcut_icon(&icon)?;
+    Ok(icon)
+}
+
+#[cfg(target_os = "windows")]
+fn update_launcher_shortcut_icons(executable: &Path, icon_path: &Path) -> Result<u32, String> {
+    let executable = powershell_single_quoted(&executable.to_string_lossy());
+    let icon_location = powershell_single_quoted(&format!("{},0", icon_path.to_string_lossy()));
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; \
+         $target = [IO.Path]::GetFullPath({executable}); \
+         $icon = {icon_location}; \
+         $shell = New-Object -ComObject WScript.Shell; \
+         $roots = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('CommonPrograms')) | Where-Object {{ $_ -and (Test-Path -LiteralPath $_) }} | Select-Object -Unique; \
+         $updated = 0; \
+         foreach ($root in $roots) {{ \
+           $null = Get-ChildItem -LiteralPath $root -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {{ \
+             try {{ \
+               $shortcut = $shell.CreateShortcut($_.FullName); \
+               if ($shortcut.TargetPath -and [string]::Equals([IO.Path]::GetFullPath($shortcut.TargetPath), $target, [StringComparison]::OrdinalIgnoreCase)) {{ \
+                 $shortcut.IconLocation = $icon; $shortcut.Save(); $updated++; \
+               }} \
+             }} catch {{ Write-Error $_; exit 1 }} \
+           }} \
+         }}; \
+         if ($updated -eq 0) {{ \
+           $desktop = [Environment]::GetFolderPath('Desktop'); \
+           $programs = [Environment]::GetFolderPath('Programs'); \
+           foreach ($folder in @($desktop, $programs)) {{ \
+             if ($folder -and (Test-Path -LiteralPath $folder)) {{ \
+               $shortcut = $shell.CreateShortcut((Join-Path $folder 'The Boys Launcher.lnk')); \
+               $shortcut.TargetPath = $target; \
+               $shortcut.WorkingDirectory = [IO.Path]::GetDirectoryName($target); \
+               $shortcut.IconLocation = $icon; \
+               $shortcut.Description = 'The Boys Minecraft Launcher'; \
+               $shortcut.Save(); $updated++; \
+             }} \
+           }} \
+         }}; \
+         [Console]::Write($updated)"
+    );
+    let mut command = Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &script,
+    ]);
+    suppress_console_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|error| format!("Could not start Windows shortcut update: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "Windows could not update the launcher shortcuts.".to_string()
+        } else {
+            format!("Windows could not update the launcher shortcuts: {detail}")
+        });
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("Windows returned an invalid shortcut count: {error}"))
+}
+
+fn apply_runtime_launcher_icon(app: &AppHandle, png_bytes: &[u8]) -> Result<(), String> {
+    let image = tauri::image::Image::from_bytes(png_bytes)
+        .map_err(|error| format!("Could not load the launcher icon: {error}"))?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Could not find the main launcher window.".to_string())?;
+    window
+        .set_icon(image.clone())
+        .map_err(|error| format!("Could not update the launcher window icon: {error}"))?;
+    app.state::<TrayIcon<Wry>>()
+        .set_icon(Some(image))
+        .map_err(|error| format!("Could not update the launcher tray icon: {error}"))?;
+    Ok(())
+}
+
+fn restore_saved_launcher_icon(app: &AppHandle) -> Result<(), String> {
+    let icon_path = get_app_data_dir()?.join("launcher-icon.png");
+    if !icon_path.is_file() {
+        return Ok(());
+    }
+    let png_bytes = fs::read(&icon_path)
+        .map_err(|error| format!("Could not read the saved launcher icon: {error}"))?;
+    build_png_icon(&png_bytes)?;
+    apply_runtime_launcher_icon(app, &png_bytes)
+}
+
+#[tauri::command]
+fn apply_launcher_icon(app: AppHandle, png_base64: String) -> Result<u32, String> {
+    let png_bytes = STANDARD
+        .decode(png_base64)
+        .map_err(|error| format!("Could not decode the launcher icon: {error}"))?;
+    let icon_bytes = build_png_icon(&png_bytes)?;
+    let app_data_dir = get_app_data_dir()?;
+    fs::create_dir_all(&app_data_dir)
+        .map_err(|error| format!("Could not create launcher settings directory: {error}"))?;
+    let png_path = app_data_dir.join("launcher-icon.png");
+    let ico_path = app_data_dir.join("launcher-icon.ico");
+    fs::write(&png_path, &png_bytes)
+        .map_err(|error| format!("Could not save the launcher icon: {error}"))?;
+    fs::write(&ico_path, &icon_bytes)
+        .map_err(|error| format!("Could not save the Windows launcher icon: {error}"))?;
+
+    apply_runtime_launcher_icon(&app, &png_bytes)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("Could not locate the launcher executable: {error}"))?;
+        return update_launcher_shortcut_icons(&executable, &ico_path);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = ico_path;
+        Ok(0)
+    }
 }
 
 /// Creates a Windows shortcut that opens the requested instance in the launcher.
@@ -1613,10 +1986,10 @@ fn loader_from_identifier(identifier: &str) -> (String, Option<String>) {
         ("fabric-", "fabric"),
         ("quilt-loader-", "quilt"),
         ("quilt-", "quilt"),
-        ("-forge-", "forge"),
-        ("forge-", "forge"),
         ("-neoforge-", "neoforge"),
         ("neoforge-", "neoforge"),
+        ("-forge-", "forge"),
+        ("forge-", "forge"),
     ] {
         if let Some(version) = identifier
             .split_once(marker)
@@ -1629,7 +2002,71 @@ fn loader_from_identifier(identifier: &str) -> (String, Option<String>) {
     ("vanilla".to_string(), None)
 }
 
+fn loader_from_version_metadata(
+    identifier: &str,
+    metadata: &serde_json::Value,
+) -> (String, Option<String>) {
+    let (mut loader, mut loader_version) = loader_from_identifier(identifier);
+    if loader == "vanilla" {
+        if let Some(libraries) = metadata
+            .get("libraries")
+            .and_then(serde_json::Value::as_array)
+        {
+            for library in libraries {
+                let name = library
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if name.starts_with("net.fabricmc:fabric-loader:") {
+                    loader = "fabric".to_string();
+                    loader_version = name.split(':').nth(2).map(str::to_string);
+                } else if name.starts_with("org.quiltmc:quilt-loader:") {
+                    loader = "quilt".to_string();
+                    loader_version = name.split(':').nth(2).map(str::to_string);
+                } else if name.starts_with("net.neoforged:neoforge:") {
+                    loader = "neoforge".to_string();
+                    loader_version = name.split(':').nth(2).map(str::to_string);
+                } else if name.starts_with("net.minecraftforge:forge:") {
+                    loader = "forge".to_string();
+                    loader_version = name
+                        .split(':')
+                        .nth(2)
+                        .and_then(|version| version.split('-').next_back())
+                        .map(str::to_string);
+                }
+            }
+        }
+    }
+    (loader, loader_version)
+}
+
 fn detect_import_metadata(game_dir: &Path) -> Result<(String, String, Option<String>), String> {
+    if is_version_profile_directory(game_dir) {
+        let identifier = game_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                "Could not read the selected Minecraft version folder name.".to_string()
+            })?;
+        let metadata_path = game_dir.join(format!("{identifier}.json"));
+        let bytes = fs::read(&metadata_path).map_err(|error| {
+            format!(
+                "Could not read Minecraft version metadata {}: {error}",
+                metadata_path.display()
+            )
+        })?;
+        let metadata: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Invalid Minecraft version metadata: {error}"))?;
+        let game_version = metadata
+            .get("inheritsFrom")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| version_from_identifier(identifier))
+            .ok_or_else(|| "Could not detect the Minecraft version in this folder.".to_string())?;
+        let (loader, loader_version) = loader_from_version_metadata(identifier, &metadata);
+        return Ok((game_version, loader, loader_version));
+    }
+
     for pack_file in ["mmc-pack.json", "manifest.json"] {
         let path = game_dir.join(pack_file);
         if !path.is_file() {
@@ -1725,37 +2162,7 @@ fn detect_import_metadata(game_dir: &Path) -> Result<(String, String, Option<Str
                 .map(str::to_string)
                 .or_else(|| version_from_identifier(&identifier));
             if let Some(game_version) = game_version {
-                let (mut loader, mut loader_version) = loader_from_identifier(&identifier);
-                if loader == "vanilla" {
-                    if let Some(libraries) = metadata
-                        .get("libraries")
-                        .and_then(serde_json::Value::as_array)
-                    {
-                        for library in libraries {
-                            let name = library
-                                .get("name")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or_default();
-                            if name.starts_with("net.fabricmc:fabric-loader:") {
-                                loader = "fabric".to_string();
-                                loader_version = name.split(':').nth(2).map(str::to_string);
-                            } else if name.starts_with("org.quiltmc:quilt-loader:") {
-                                loader = "quilt".to_string();
-                                loader_version = name.split(':').nth(2).map(str::to_string);
-                            } else if name.starts_with("net.neoforged:neoforge:") {
-                                loader = "neoforge".to_string();
-                                loader_version = name.split(':').nth(2).map(str::to_string);
-                            } else if name.starts_with("net.minecraftforge:forge:") {
-                                loader = "forge".to_string();
-                                loader_version = name
-                                    .split(':')
-                                    .nth(2)
-                                    .and_then(|version| version.split('-').next_back())
-                                    .map(str::to_string);
-                            }
-                        }
-                    }
-                }
+                let (loader, loader_version) = loader_from_version_metadata(&identifier, &metadata);
                 candidates.push((game_version, loader, loader_version));
             }
         }
@@ -1839,7 +2246,7 @@ fn detect_import_metadata(game_dir: &Path) -> Result<(String, String, Option<Str
         }
     }
 
-    Err("Could not detect a Minecraft version in this folder. Select the profile's game directory (SKLauncher 4: open the profile's Game Directory) or an instance folder containing Minecraft version metadata.".to_string())
+    Err("Could not detect a Minecraft version in this folder. Select the profile's game directory, a Minecraft versions/<profile> folder, or an instance folder containing Minecraft version metadata.".to_string())
 }
 
 fn is_import_game_directory(path: &Path) -> bool {
@@ -1874,7 +2281,35 @@ fn has_importable_game_data(path: &Path) -> bool {
     .any(|entry| path.join(entry).exists())
 }
 
+fn is_version_profile_directory(path: &Path) -> bool {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map_or(false, |name| name.eq_ignore_ascii_case("versions"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map_or(false, |identifier| {
+                path.join(format!("{identifier}.json")).is_file()
+            })
+}
+
 fn resolve_import_directories(selected_path: &Path) -> Result<(PathBuf, PathBuf), String> {
+    if is_version_profile_directory(selected_path) {
+        let versions_dir = selected_path
+            .parent()
+            .ok_or_else(|| "Could not locate the Minecraft versions folder.".to_string())?;
+        let parent_game_dir = versions_dir
+            .parent()
+            .ok_or_else(|| "Could not locate the Minecraft game directory.".to_string())?;
+        let game_dir = if has_importable_game_data(selected_path) {
+            selected_path
+        } else {
+            parent_game_dir
+        };
+        return Ok((game_dir.to_path_buf(), selected_path.to_path_buf()));
+    }
+
     let game_dir = if has_importable_game_data(selected_path) {
         selected_path.to_path_buf()
     } else {
@@ -1883,7 +2318,7 @@ fn resolve_import_directories(selected_path: &Path) -> Result<(PathBuf, PathBuf)
         .map(|child| selected_path.join(child))
         .find(|candidate| candidate.is_dir() && has_importable_game_data(candidate))
         .or_else(|| is_import_game_directory(selected_path).then(|| selected_path.to_path_buf()))
-        .ok_or_else(|| "The selected folder does not look like a Minecraft game directory. Choose the SKLauncher profile's Game Directory or its .minecraft folder.".to_string())?
+        .ok_or_else(|| "The selected folder does not look like a Minecraft game directory or version profile. Choose the SKLauncher profile's Game Directory, its .minecraft folder, or a versions/<profile> folder.".to_string())?
     };
     let metadata_dir = if game_dir != selected_path && is_import_game_directory(selected_path) {
         selected_path.to_path_buf()
@@ -1949,14 +2384,25 @@ fn import_minecraft_instance(source_path: String) -> Result<ImportedInstanceInfo
     }
 
     let id = format!("import_{}", Uuid::new_v4().simple());
-    let name = game_dir
+    let name_source = if is_version_profile_directory(&selected_path) {
+        &metadata_dir
+    } else {
+        &game_dir
+    };
+    let imported_name = name_source
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("Imported Minecraft")
         .to_string();
-    let instances_dir = get_app_data_dir()?.join("instances");
-    let instance_dir = instances_dir.join(&id);
+    let name = if validate_instance_name(&imported_name).is_ok() {
+        imported_name
+    } else {
+        format!("Imported Minecraft {}", &id[id.len().saturating_sub(8)..])
+    };
+    let app_data_dir = get_app_data_dir()?;
+    let instances_dir = app_data_dir.join("instances");
+    let instance_dir = resolve_instance_directory(&app_data_dir, &id, Some(&name))?;
     let custom_game_dir = instance_dir.clone();
     fs::create_dir_all(&instances_dir)
         .map_err(|error| format!("Could not create the instances directory: {error}"))?;
@@ -1964,6 +2410,9 @@ fn import_minecraft_instance(source_path: String) -> Result<ImportedInstanceInfo
         .map_err(|error| format!("Could not create imported instance: {error}"))?;
     let import_result = (|| {
         copy_imported_game_data(&game_dir, &instance_dir)?;
+        if metadata_dir != game_dir && is_version_profile_directory(&metadata_dir) {
+            copy_imported_game_data(&metadata_dir, &instance_dir)?;
+        }
         for directory in ["mods", "resourcepacks", "shaderpacks", "saves"] {
             fs::create_dir_all(instance_dir.join(directory)).map_err(|error| {
                 format!("Could not create instance {directory} folder: {error}")
@@ -2023,12 +2472,31 @@ fn create_instance(
     loader: String,
 ) -> Result<String, String> {
     validate_instance_id(&id)?;
-    let dir = get_app_data_dir()?.join("instances").join(&id);
+    validate_instance_name(&name)?;
+    let app_data_dir = get_app_data_dir()?;
+    let dir = resolve_instance_directory(&app_data_dir, &id, Some(&name))?;
+    if dir.exists() {
+        let metadata_path = dir.join("instance.json");
+        let existing_id = fs::read(&metadata_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|metadata| {
+                metadata
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+        if existing_id.as_deref() != Some(&id) {
+            return Err(format!(
+                "An instance folder named '{}' already exists.",
+                name
+            ));
+        }
+    }
     fs::create_dir_all(dir.join("mods")).map_err(|error| error.to_string())?;
     fs::create_dir_all(dir.join("resourcepacks")).map_err(|error| error.to_string())?;
     fs::create_dir_all(dir.join("shaderpacks")).map_err(|error| error.to_string())?;
     fs::create_dir_all(dir.join("saves")).map_err(|error| error.to_string())?;
-
     let metadata = InstanceMetadata {
         id,
         name,
@@ -2041,13 +2509,139 @@ fn create_instance(
     Ok(dir.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn rename_instance_folder(id: String, name: String) -> Result<String, String> {
+    validate_instance_id(&id)?;
+    validate_instance_name(&name)?;
+    let app_data_dir = get_app_data_dir()?;
+    let instances_dir = app_data_dir.join("instances");
+    let source = resolve_instance_directory(&app_data_dir, &id, None)?;
+    let target = instances_dir.join(&name);
+
+    if source != target {
+        if target.exists() {
+            let target_id = fs::read(target.join("instance.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|metadata| {
+                    metadata
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                });
+            if target_id.as_deref() != Some(&id) {
+                return Err(format!(
+                    "An instance folder named '{}' already exists.",
+                    name
+                ));
+            }
+        } else if source.exists() {
+            fs::rename(&source, &target).map_err(|error| {
+                format!("Could not rename instance folder to '{}': {error}", name)
+            })?;
+        } else {
+            fs::create_dir_all(&target)
+                .map_err(|error| format!("Could not create instance folder: {error}"))?;
+        }
+    }
+
+    let metadata_path = target.join("instance.json");
+    let mut metadata = match fs::read(&metadata_path) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map_err(|error| format!("Could not read instance metadata: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({
+            "id": id,
+            "name": name,
+            "game_version": "",
+            "loader": "vanilla",
+        }),
+        Err(error) => return Err(format!("Could not read instance metadata: {error}")),
+    };
+    metadata["id"] = serde_json::Value::String(id);
+    metadata["name"] = serde_json::Value::String(name);
+    fs::write(
+        &metadata_path,
+        serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("Could not update instance metadata: {error}"))?;
+    for folder in ["mods", "resourcepacks", "shaderpacks", "saves"] {
+        fs::create_dir_all(target.join(folder))
+            .map_err(|error| format!("Could not create instance {folder} folder: {error}"))?;
+    }
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn open_instance_folder(
+    id: String,
+    name: String,
+    custom_game_dir: Option<String>,
+) -> Result<(), String> {
+    let path = instance_game_dir_named(&id, &name, custom_game_dir)?;
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("Could not open instance folder {}: {error}", path.display()))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let operation = "open\0".encode_utf16().collect::<Vec<_>>();
+        let path = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(operation.as_ptr()),
+                PCWSTR(path.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if result.0 as usize <= 32 {
+            return Err(format!(
+                "Windows could not open the instance folder (ShellExecute error {}).",
+                result.0 as usize
+            ));
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        let (program, argument) = ("open", path.as_os_str().to_os_string());
+        #[cfg(not(target_os = "macos"))]
+        let (program, argument) = ("xdg-open", path.as_os_str().to_os_string());
+
+        let mut command = Command::new(program);
+        suppress_console_window(&mut command);
+        command
+            .arg(argument)
+            .spawn()
+            .map_err(|error| format!("Could not open the instance folder: {error}"))?;
+        Ok(())
+    }
+}
+
 /// Deletes an instance directory
 #[tauri::command]
 fn delete_instance(id: String) -> Result<bool, String> {
     validate_instance_id(&id)?;
-    let dir = get_app_data_dir()?.join("instances").join(&id);
+    let dir = resolve_instance_directory(&get_app_data_dir()?, &id, None)?;
     if dir.exists() {
-        fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&dir).map_err(|error| {
+            format!(
+                "Could not delete instance folder {}: {error}",
+                dir.display()
+            )
+        })?;
         Ok(true)
     } else {
         Ok(false)
@@ -2200,6 +2794,8 @@ fn delete_mod_file(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InstallAddonRequest {
     pub instance_id: String,
+    #[serde(default)]
+    pub instance_name: Option<String>,
     pub addon_id: String,
     pub addon_name: String,
     pub addon_type: String, // "mod", "resourcepack", "shader", "datapack"
@@ -2241,6 +2837,7 @@ pub struct LauncherUpdateInfo {
     pub release_notes: String,
     pub download_url: Option<String>,
     pub asset_name: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Downloads and installs an addon (mod, resource pack, shader pack, or data pack) directly into the instance
@@ -2248,12 +2845,31 @@ pub struct LauncherUpdateInfo {
 async fn install_instance_addon(
     request: InstallAddonRequest,
 ) -> Result<InstallAddonResult, String> {
-    let instance_dir = instance_game_dir(&request.instance_id, request.custom_game_dir.clone())?;
+    let instance_dir = match request.instance_name.as_deref() {
+        Some(name) => {
+            instance_game_dir_named(&request.instance_id, name, request.custom_game_dir.clone())?
+        }
+        None => instance_game_dir(&request.instance_id, request.custom_game_dir.clone())?,
+    };
 
     let folder_name = addon_folder(&request.addon_type)?;
-    let target_dir = instance_dir.join(folder_name);
-    fs::create_dir_all(&target_dir)
-        .map_err(|e| format!("Could not create folder {}: {e}", target_dir.display()))?;
+    let target_dirs = if folder_name == "datapacks" {
+        let directories = world_datapack_dirs(&instance_dir)?;
+        if directories.is_empty() {
+            return Err(
+                "Data packs belong to Minecraft worlds. Create a world in this instance before installing a data pack."
+                    .to_string(),
+            );
+        }
+        directories
+    } else {
+        vec![instance_dir.join(folder_name)]
+    };
+    for target_dir in &target_dirs {
+        fs::create_dir_all(target_dir).map_err(|error| {
+            format!("Could not create folder {}: {error}", target_dir.display())
+        })?;
+    }
 
     let client = reqwest::Client::new();
     let (download_url, final_file_name) = if let Some(direct_url) =
@@ -2298,7 +2914,13 @@ async fn install_instance_addon(
             return Err("No downloadable versions found for this Modrinth addon.".to_string());
         }
 
-        let req_loader = request.loader.as_deref().unwrap_or("").to_ascii_lowercase();
+        let req_loader = if request.addon_type.eq_ignore_ascii_case("mod")
+            || request.addon_type.eq_ignore_ascii_case("mods")
+        {
+            request.loader.as_deref().unwrap_or("").to_ascii_lowercase()
+        } else {
+            String::new()
+        };
         let req_gv = request.game_version.as_deref().unwrap_or("");
 
         let chosen_version = versions
@@ -2366,7 +2988,7 @@ async fn install_instance_addon(
             .map_err(|e| format!("CurseForge file request failed: {e}"))?;
 
         if !resp.status().is_success() {
-            return Err(format!("CurseForge returned HTTP {}.", resp.status()));
+            return Err(curseforge_api_error("file lookup", resp).await);
         }
 
         let body: serde_json::Value = resp
@@ -2426,10 +3048,7 @@ async fn install_instance_addon(
                     .await
                     .map_err(|e| format!("CurseForge download URL resolution failed: {e}"))?;
                 if !dl_res.status().is_success() {
-                    return Err(format!(
-                        "CurseForge download URL lookup returned HTTP {}.",
-                        dl_res.status()
-                    ));
+                    return Err(curseforge_api_error("download URL lookup", dl_res).await);
                 }
                 let dl_body: serde_json::Value = dl_res
                     .json()
@@ -2472,13 +3091,35 @@ async fn install_instance_addon(
         final_file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
     validate_addon_file_name(&safe_file_name, folder_name, false)?;
 
-    let target_path = target_dir.join(&safe_file_name);
-    fs::write(&target_path, &bytes).map_err(|e| {
-        format!(
-            "Failed to save addon file to {}: {e}",
-            target_path.display()
-        )
-    })?;
+    let target_paths: Vec<PathBuf> = target_dirs
+        .iter()
+        .map(|directory| directory.join(&safe_file_name))
+        .collect();
+    for (index, target_path) in target_paths.iter().enumerate() {
+        if let Err(error) = fs::write(target_path, &bytes) {
+            let mut rollback_errors = Vec::new();
+            for created_path in target_paths.iter().take(index) {
+                if let Err(rollback_error) = fs::remove_file(created_path) {
+                    if rollback_error.kind() != std::io::ErrorKind::NotFound {
+                        rollback_errors
+                            .push(format!("{}: {rollback_error}", created_path.display()));
+                    }
+                }
+            }
+            let rollback_message = if rollback_errors.is_empty() {
+                String::new()
+            } else {
+                format!(" Rollback also failed for: {}.", rollback_errors.join(", "))
+            };
+            return Err(format!(
+                "Failed to save addon file to {}: {error}.{rollback_message}",
+                target_path.display()
+            ));
+        }
+    }
+    let target_path = target_paths
+        .first()
+        .ok_or_else(|| "No destination folder was available for the addon.".to_string())?;
 
     Ok(InstallAddonResult {
         success: true,
@@ -2495,18 +3136,121 @@ async fn install_instance_addon(
 }
 
 fn safe_modpack_relative_path(value: &str) -> Result<PathBuf, String> {
-    if value.is_empty() || value.contains(['\\', ':']) {
+    let normalized = value.replace('\\', "/");
+    if normalized.trim().is_empty() || normalized.starts_with('/') {
         return Err(format!("Modpack contains an unsafe file path: {value}"));
     }
-    let path = Path::new(value);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    let mut path = PathBuf::new();
+    for component in normalized.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        let base_name = component.split('.').next().unwrap_or_default();
+        let reserved_name = matches!(
+            base_name.to_ascii_uppercase().as_str(),
+            "CON"
+                | "PRN"
+                | "AUX"
+                | "NUL"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        );
+        if component == ".."
+            || component.len() > 255
+            || component.ends_with([' ', '.'])
+            || component.chars().any(|character| {
+                character.is_control()
+                    || matches!(character, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
+            })
+            || reserved_name
+        {
+            return Err(format!("Modpack contains an unsafe file path: {value}"));
+        }
+        path.push(component);
+    }
+    if path.as_os_str().is_empty() {
+        return Err(format!("Modpack contains an unsafe file path: {value}"));
+    }
+    Ok(path)
+}
+
+fn curseforge_loader_type(loader: Option<&str>) -> Option<u32> {
+    match loader?.to_ascii_lowercase().as_str() {
+        "forge" => Some(1),
+        "fabric" => Some(4),
+        "quilt" => Some(5),
+        "neoforge" => Some(6),
+        _ => None,
+    }
+}
+
+fn curseforge_file_lookup_payload(file_ids: &[u64]) -> serde_json::Value {
+    serde_json::json!({ "fileIds": file_ids })
+}
+
+fn validate_fresh_modpack_instance(instance_dir: &Path, instance_id: &str) -> Result<(), String> {
+    let metadata_path = instance_dir.join("instance.json");
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &fs::read(&metadata_path)
+            .map_err(|error| format!("Modpacks require a newly created instance: {error}"))?,
+    )
+    .map_err(|error| format!("Could not read the new instance metadata: {error}"))?;
+    if metadata.get("id").and_then(serde_json::Value::as_str) != Some(instance_id) {
+        return Err(
+            "Modpacks can only be installed into a newly created, unused instance.".to_string(),
+        );
+    }
+
+    for entry in fs::read_dir(instance_dir)
+        .map_err(|error| format!("Could not inspect the new instance: {error}"))?
     {
-        return Err(format!("Modpack contains an unsafe file path: {value}"));
+        let entry =
+            entry.map_err(|error| format!("Could not inspect the new instance: {error}"))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Could not inspect the new instance: {error}"))?;
+        if name == "instance.json" && file_type.is_file() {
+            continue;
+        }
+        if ["mods", "resourcepacks", "shaderpacks", "saves"].contains(&name.as_ref())
+            && file_type.is_dir()
+        {
+            let mut contents = fs::read_dir(entry.path()).map_err(|error| {
+                format!("Could not inspect the new instance {name} folder: {error}")
+            })?;
+            match contents.next() {
+                None => continue,
+                Some(Ok(_)) => {}
+                Some(Err(error)) => {
+                    return Err(format!(
+                        "Could not inspect the new instance {name} folder: {error}"
+                    ));
+                }
+            }
+        }
+        return Err(
+            "Modpacks can only be installed into a newly created, unused instance.".to_string(),
+        );
     }
-    Ok(path.to_path_buf())
+    Ok(())
 }
 
 async fn download_modpack_file(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
@@ -2552,13 +3296,20 @@ fn extract_modpack_overrides(
         let mut file = archive
             .by_index(index)
             .map_err(|error| format!("Could not inspect modpack archive: {error}"))?;
-        let entry_name = file.name().to_string();
+        let entry_name = file.name().replace('\\', "/");
         let relative = ["overrides/", "client-overrides/"]
             .iter()
             .find_map(|prefix| entry_name.strip_prefix(prefix));
         let Some(relative) = relative else {
             continue;
         };
+        if file.is_dir()
+            && relative
+                .split('/')
+                .all(|component| component.is_empty() || component == ".")
+        {
+            continue;
+        }
         let relative_path = safe_modpack_relative_path(relative)?;
         let target = instance_dir.join(relative_path);
         if file.is_dir() {
@@ -2746,19 +3497,30 @@ async fn install_curseforge_pack(
     let api_key = get_curseforge_api_key()?.ok_or_else(|| {
         "A CurseForge API key is required to install CurseForge modpacks.".to_string()
     })?;
+    let mod_id = request
+        .addon_id
+        .parse::<u64>()
+        .map_err(|_| "CurseForge returned an invalid modpack ID.".to_string())?;
     let mut files_url = reqwest::Url::parse(&format!(
-        "https://api.curseforge.com/v1/mods/{}/files",
-        request.addon_id
+        "https://api.curseforge.com/v1/mods/{mod_id}/files"
     ))
     .map_err(|error| format!("Could not construct CurseForge file URL: {error}"))?;
-    files_url
-        .query_pairs_mut()
-        .append_pair(
-            "gameVersion",
-            request.game_version.as_deref().unwrap_or_default(),
-        )
-        .append_pair("pageSize", "50")
-        .append_pair("index", "0");
+    {
+        let mut query = files_url.query_pairs_mut();
+        if let Some(game_version) = request
+            .game_version
+            .as_deref()
+            .filter(|version| !version.is_empty())
+        {
+            query.append_pair("gameVersion", game_version);
+        }
+        if let Some(loader_type) = curseforge_loader_type(request.loader.as_deref()) {
+            query.append_pair("modLoaderType", &loader_type.to_string());
+        }
+        query
+            .append_pair("pageSize", "50")
+            .append_pair("index", "0");
+    }
     let response = client
         .get(files_url)
         .header("x-api-key", &api_key)
@@ -2766,10 +3528,7 @@ async fn install_curseforge_pack(
         .await
         .map_err(|error| format!("Could not query CurseForge modpack files: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "CurseForge modpack lookup returned HTTP {}.",
-            response.status()
-        ));
+        return Err(curseforge_api_error("modpack lookup", response).await);
     }
     let body: serde_json::Value = response
         .json()
@@ -2797,10 +3556,8 @@ async fn install_curseforge_pack(
     let download_url = match download_url {
         Some(url) => url,
         None => {
-            let url = format!(
-                "https://api.curseforge.com/v1/mods/{}/files/{pack_id}/download-url",
-                request.addon_id
-            );
+            let url =
+                format!("https://api.curseforge.com/v1/mods/{mod_id}/files/{pack_id}/download-url");
             let response = client
                 .get(url)
                 .header("x-api-key", &api_key)
@@ -2810,10 +3567,7 @@ async fn install_curseforge_pack(
                     format!("Could not resolve CurseForge modpack download URL: {error}")
                 })?;
             if !response.status().is_success() {
-                return Err(format!(
-                    "CurseForge download URL lookup returned HTTP {}.",
-                    response.status()
-                ));
+                return Err(curseforge_api_error("download URL lookup", response).await);
             }
             response
                 .json::<serde_json::Value>()
@@ -2845,34 +3599,30 @@ async fn install_curseforge_pack(
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "CurseForge modpack manifest has no files list.".to_string())?;
     let mut identifiers = Vec::new();
+    let mut unique_identifiers = HashSet::new();
     for file in pack_files {
         if file.get("required").and_then(serde_json::Value::as_bool) == Some(false) {
             continue;
         }
-        let mod_id = file
-            .get("projectID")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| "CurseForge modpack entry has no project ID.".to_string())?;
         let file_id = file
             .get("fileID")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| "CurseForge modpack entry has no file ID.".to_string())?;
-        identifiers.push(serde_json::json!({"modId": mod_id, "fileId": file_id}));
+        if unique_identifiers.insert(file_id) {
+            identifiers.push(file_id);
+        }
     }
     let mut total_bytes = 0u64;
     for chunk in identifiers.chunks(50) {
         let response = client
             .post("https://api.curseforge.com/v1/mods/files")
             .header("x-api-key", &api_key)
-            .json(chunk)
+            .json(&curseforge_file_lookup_payload(chunk))
             .send()
             .await
             .map_err(|error| format!("Could not resolve CurseForge modpack files: {error}"))?;
         if !response.status().is_success() {
-            return Err(format!(
-                "CurseForge file lookup returned HTTP {}.",
-                response.status()
-            ));
+            return Err(curseforge_api_error("modpack file lookup", response).await);
         }
         let body: serde_json::Value = response
             .json()
@@ -2882,25 +3632,38 @@ async fn install_curseforge_pack(
             .get("data")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "CurseForge file lookup returned no file data.".to_string())?;
+        let requested: HashSet<u64> = chunk.iter().copied().collect();
+        let mut received = HashSet::new();
         for file in files {
-            let url = file
-                .get("downloadUrl")
-                .and_then(serde_json::Value::as_str)
+            let file_id = file
+                .get("id")
+                .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| {
-                    "A modpack file is unavailable for download from CurseForge.".to_string()
+                    "CurseForge file lookup returned a file without an ID.".to_string()
                 })?;
+            if !requested.contains(&file_id) {
+                return Err(
+                    "CurseForge returned a file that was not in the modpack manifest.".to_string(),
+                );
+            }
+            received.insert(file_id);
             let name = file
                 .get("fileName")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "CurseForge file is missing its name.".to_string())?;
+            let safe_name = safe_modpack_relative_path(name)?;
+            let url = file
+                .get("downloadUrl")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!("CurseForge modpack file '{name}' is not available for download.")
+                })?;
             let bytes = download_modpack_file(client, url).await?;
             total_bytes = total_bytes.saturating_add(bytes.len() as u64);
             if total_bytes > 2 * 1024 * 1024 * 1024 {
                 return Err("Modpack files exceed the 2 GiB install limit.".to_string());
             }
-            let target = instance_dir
-                .join("mods")
-                .join(safe_modpack_relative_path(name)?);
+            let target = instance_dir.join("mods").join(safe_name);
             fs::create_dir_all(
                 target
                     .parent()
@@ -2914,10 +3677,48 @@ async fn install_curseforge_pack(
                 )
             })?;
         }
+        let missing: Vec<String> = requested
+            .difference(&received)
+            .map(u64::to_string)
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "CurseForge did not return required modpack file IDs: {}.",
+                missing.join(", ")
+            ));
+        }
     }
     total_bytes =
         total_bytes.saturating_add(extract_modpack_overrides(&mut archive, instance_dir)?);
     Ok(("CurseForge modpack".to_string(), total_bytes))
+}
+
+fn commit_modpack_staging_directory(instance_dir: &Path, staging_dir: &Path) -> Result<(), String> {
+    let parent = instance_dir
+        .parent()
+        .ok_or_else(|| "The new instance has no parent directory.".to_string())?;
+    let backup_dir = parent.join(format!(
+        ".the-boys-modpack-backup-{}",
+        Uuid::new_v4().simple()
+    ));
+    fs::rename(instance_dir, &backup_dir).map_err(|error| {
+        format!("Could not prepare the new instance for modpack install: {error}")
+    })?;
+    if let Err(error) = fs::rename(staging_dir, instance_dir) {
+        return match fs::rename(&backup_dir, instance_dir) {
+            Ok(()) => Err(format!("Could not finalize the modpack install: {error}")),
+            Err(rollback_error) => Err(format!(
+                "Could not finalize the modpack install: {error}. Restoring the empty instance also failed: {rollback_error}"
+            )),
+        };
+    }
+    if let Err(error) = fs::remove_dir_all(&backup_dir) {
+        log::warn!(
+            "Modpack installed, but could not remove empty instance backup {}: {error}",
+            backup_dir.display()
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2925,15 +3726,53 @@ async fn install_instance_modpack(
     request: InstallAddonRequest,
 ) -> Result<InstallAddonResult, String> {
     validate_instance_id(&request.instance_id)?;
-    let instance_dir = instance_game_dir(&request.instance_id, request.custom_game_dir.clone())?;
-    let remove_on_failure = !instance_dir.exists();
-    fs::create_dir_all(&instance_dir)
-        .map_err(|error| format!("Could not create instance directory: {error}"))?;
+    let instance_name = request
+        .instance_name
+        .as_deref()
+        .ok_or_else(|| "Create a new named instance before installing a modpack.".to_string())?;
+    validate_instance_name(instance_name)?;
+    let instance_dir = instance_game_dir_named(
+        &request.instance_id,
+        instance_name,
+        request.custom_game_dir.clone(),
+    )?;
+    validate_fresh_modpack_instance(&instance_dir, &request.instance_id)?;
+    let parent = instance_dir
+        .parent()
+        .ok_or_else(|| "The new instance has no parent directory.".to_string())?;
+    let staging_dir = parent.join(format!(
+        ".the-boys-modpack-staging-{}",
+        Uuid::new_v4().simple()
+    ));
+    fs::create_dir(&staging_dir)
+        .map_err(|error| format!("Could not prepare modpack staging directory: {error}"))?;
+    let prepare_staging = (|| {
+        fs::copy(
+            instance_dir.join("instance.json"),
+            staging_dir.join("instance.json"),
+        )
+        .map_err(|error| {
+            format!("Could not copy instance metadata for modpack install: {error}")
+        })?;
+        for folder in ["mods", "resourcepacks", "shaderpacks", "saves"] {
+            fs::create_dir(staging_dir.join(folder))
+                .map_err(|error| format!("Could not create modpack {folder} folder: {error}"))?;
+        }
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = prepare_staging {
+        return match fs::remove_dir_all(&staging_dir) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!(
+                "{error} Could not remove modpack staging directory: {cleanup_error}"
+            )),
+        };
+    }
     let client = reqwest::Client::new();
     let install_result = if request.provider.eq_ignore_ascii_case("modrinth") {
-        install_modrinth_pack(&request, &instance_dir, &client).await
+        install_modrinth_pack(&request, &staging_dir, &client).await
     } else if request.provider.eq_ignore_ascii_case("curseforge") {
-        install_curseforge_pack(&request, &instance_dir, &client).await
+        install_curseforge_pack(&request, &staging_dir, &client).await
     } else {
         Err(format!(
             "Unsupported modpack provider: {}",
@@ -2943,16 +3782,22 @@ async fn install_instance_modpack(
     let (label, size_bytes) = match install_result {
         Ok(result) => result,
         Err(error) => {
-            if remove_on_failure {
-                if let Err(cleanup_error) = fs::remove_dir_all(&instance_dir) {
-                    return Err(format!(
-                        "{error} Also failed to remove the incomplete modpack instance: {cleanup_error}"
-                    ));
-                }
-            }
-            return Err(error);
+            return match fs::remove_dir_all(&staging_dir) {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(format!(
+                    "{error} Could not remove incomplete modpack staging data: {cleanup_error}"
+                )),
+            };
         }
     };
+    if let Err(error) = commit_modpack_staging_directory(&instance_dir, &staging_dir) {
+        return match fs::remove_dir_all(&staging_dir) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!(
+                "{error} Could not remove modpack staging data: {cleanup_error}"
+            )),
+        };
+    }
     Ok(InstallAddonResult {
         success: true,
         file_name: request.addon_name.clone(),
@@ -2986,48 +3831,63 @@ fn list_instance_addons(
     ];
 
     for (folder, addon_type) in folders {
-        let dir = instance_dir.join(folder);
-        if !dir.is_dir() {
-            continue;
-        }
-        let entries = fs::read_dir(&dir)
-            .map_err(|error| format!("Could not list {}: {error}", dir.display()))?;
-        for entry in entries {
-            let path = entry.map_err(|error| error.to_string())?.path();
-            if !path.is_file() {
+        let directories = if addon_type == "datapack" {
+            let mut directories = vec![instance_dir.join(folder)];
+            directories.extend(world_datapack_dirs(&instance_dir)?);
+            directories
+        } else {
+            vec![instance_dir.join(folder)]
+        };
+        for dir in directories {
+            if !dir.is_dir() {
                 continue;
             }
-            let file_name = path
-                .file_name()
-                .ok_or_else(|| format!("Addon path has no file name: {}", path.display()))?
-                .to_string_lossy()
-                .to_string();
-            let lower = file_name.to_lowercase();
-            let expected_extension = if addon_type == "mod" { ".jar" } else { ".zip" };
-            if !lower.ends_with(expected_extension)
-                && !lower.ends_with(&format!("{expected_extension}.disabled"))
-            {
-                continue;
-            }
-            let enabled = !lower.ends_with(".disabled");
-            let clean_length = file_name.len()
-                - if enabled { 0 } else { ".disabled".len() }
-                - expected_extension.len();
-            let clean_name = file_name[..clean_length].to_string();
-            let size_bytes = path
-                .metadata()
-                .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
-                .len();
+            let entries = fs::read_dir(&dir)
+                .map_err(|error| format!("Could not list {}: {error}", dir.display()))?;
+            for entry in entries {
+                let path = entry.map_err(|error| error.to_string())?.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let file_name = path
+                    .file_name()
+                    .ok_or_else(|| format!("Addon path has no file name: {}", path.display()))?
+                    .to_string_lossy()
+                    .to_string();
+                let lower = file_name.to_lowercase();
+                let expected_extension = if addon_type == "mod" { ".jar" } else { ".zip" };
+                if !lower.ends_with(expected_extension)
+                    && !lower.ends_with(&format!("{expected_extension}.disabled"))
+                {
+                    continue;
+                }
+                if addon_type == "datapack"
+                    && items.iter().any(|item: &InstanceAddonItem| {
+                        item.addon_type == addon_type && item.file_name == file_name
+                    })
+                {
+                    continue;
+                }
+                let enabled = !lower.ends_with(".disabled");
+                let clean_length = file_name.len()
+                    - if enabled { 0 } else { ".disabled".len() }
+                    - expected_extension.len();
+                let clean_name = file_name[..clean_length].to_string();
+                let size_bytes = path
+                    .metadata()
+                    .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
+                    .len();
 
-            items.push(InstanceAddonItem {
-                id: format!("{folder}_{file_name}"),
-                file_name: file_name.clone(),
-                name: clean_name,
-                addon_type: addon_type.to_string(),
-                enabled,
-                size_bytes,
-                path: path.to_string_lossy().to_string(),
-            });
+                items.push(InstanceAddonItem {
+                    id: format!("{folder}_{file_name}"),
+                    file_name: file_name.clone(),
+                    name: clean_name,
+                    addon_type: addon_type.to_string(),
+                    enabled,
+                    size_bytes,
+                    path: path.to_string_lossy().to_string(),
+                });
+            }
         }
     }
 
@@ -3045,9 +3905,21 @@ fn toggle_instance_addon(
 ) -> Result<String, String> {
     let folder_name = addon_folder(&addon_type)?;
     validate_addon_file_name(&file_name, folder_name, true)?;
-    let dir = instance_game_dir(&instance_id, custom_game_dir)?.join(folder_name);
-    let current_path = dir.join(&file_name);
-    if !current_path.exists() {
+    let instance_dir = instance_game_dir(&instance_id, custom_game_dir)?;
+    let current_paths: Vec<PathBuf> = if folder_name == "datapacks" {
+        datapack_file_paths(&instance_dir, &file_name)?
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect()
+    } else {
+        let path = instance_dir.join(folder_name).join(&file_name);
+        if path.is_file() {
+            vec![path]
+        } else {
+            Vec::new()
+        }
+    };
+    if current_paths.is_empty() {
         return Err(format!("Addon file '{}' does not exist.", file_name));
     }
 
@@ -3063,8 +3935,27 @@ fn toggle_instance_addon(
             format!("{}.disabled", file_name)
         }
     };
-    let new_path = dir.join(&new_name);
-    fs::rename(current_path, new_path).map_err(|e| e.to_string())?;
+    let mut renamed_paths: Vec<PathBuf> = Vec::new();
+    for current_path in &current_paths {
+        let new_path = current_path.with_file_name(&new_name);
+        if let Err(error) = fs::rename(current_path, &new_path) {
+            let mut rollback_errors = Vec::new();
+            for renamed_path in renamed_paths {
+                let rollback_path = renamed_path.with_file_name(&file_name);
+                if let Err(rollback_error) = fs::rename(&renamed_path, rollback_path) {
+                    rollback_errors.push(format!("{}: {rollback_error}", renamed_path.display()));
+                }
+            }
+            if rollback_errors.is_empty() {
+                return Err(format!("Could not toggle addon file: {error}"));
+            }
+            return Err(format!(
+                "Could not toggle addon file: {error}. Rollback also failed for: {}.",
+                rollback_errors.join(", ")
+            ));
+        }
+        renamed_paths.push(new_path);
+    }
     Ok(new_name)
 }
 
@@ -3078,15 +3969,35 @@ fn delete_instance_addon(
 ) -> Result<bool, String> {
     let folder_name = addon_folder(&addon_type)?;
     validate_addon_file_name(&file_name, folder_name, true)?;
-    let file_path = instance_game_dir(&instance_id, custom_game_dir)?
-        .join(folder_name)
-        .join(&file_name);
-    if file_path.exists() {
-        fs::remove_file(file_path).map_err(|e| e.to_string())?;
-        Ok(true)
+    let instance_dir = instance_game_dir(&instance_id, custom_game_dir)?;
+    let file_paths: Vec<PathBuf> = if folder_name == "datapacks" {
+        datapack_file_paths(&instance_dir, &file_name)?
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect()
     } else {
-        Ok(false)
+        let path = instance_dir.join(folder_name).join(&file_name);
+        if path.is_file() {
+            vec![path]
+        } else {
+            Vec::new()
+        }
+    };
+    if file_paths.is_empty() {
+        return Ok(false);
     }
+    let mut removed_paths = Vec::new();
+    for file_path in file_paths {
+        if let Err(error) = fs::remove_file(&file_path) {
+            return Err(format!(
+                "Could not delete addon file {}: {error}. Files already removed: {}.",
+                file_path.display(),
+                removed_paths.len()
+            ));
+        }
+        removed_paths.push(file_path);
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -3275,7 +4186,7 @@ async fn login_with_microsoft_loopback(
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect_uri)
         .append_pair("response_mode", "query")
-        .append_pair("scope", "XboxLive.signin offline_access")
+        .append_pair("scope", MICROSOFT_AUTH_SCOPES)
         .append_pair("code_challenge", &code_challenge)
         .append_pair("code_challenge_method", "S256")
         .append_pair("prompt", "select_account");
@@ -3359,14 +4270,13 @@ async fn login_with_microsoft_loopback(
     let http_client = reqwest::Client::new();
     let token_res = http_client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-        .form(&[
+        .form(&microsoft_oauth_form(&[
             ("client_id", client_id.as_str()),
             ("grant_type", "authorization_code"),
             ("code", auth_code.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("code_verifier", code_verifier.as_str()),
-            ("scope", "XboxLive.signin offline_access"),
-        ])
+        ]))
         .send()
         .await
         .map_err(|e| format!("Failed to exchange authorization code: {e}"))?;
@@ -3571,7 +4481,7 @@ fn is_newer_version(latest: &str, current: &str) -> bool {
     l > c
 }
 
-fn select_windows_installer(assets: &[serde_json::Value]) -> Option<(String, String)> {
+fn select_windows_installer(assets: &[serde_json::Value]) -> Option<(String, String, String)> {
     assets.iter().find_map(|asset| {
         let name = asset.get("name").and_then(|name| name.as_str())?;
         if !name.to_ascii_lowercase().ends_with(".exe") {
@@ -3580,7 +4490,28 @@ fn select_windows_installer(assets: &[serde_json::Value]) -> Option<(String, Str
         let url = asset
             .get("browser_download_url")
             .and_then(|url| url.as_str())?;
-        Some((url.to_string(), name.to_string()))
+        let parsed_url = reqwest::Url::parse(url).ok()?;
+        if parsed_url.scheme() != "https"
+            || parsed_url.host_str() != Some("github.com")
+            || !parsed_url
+                .path()
+                .starts_with("/ktesla39/TheBoyz/releases/download/")
+            || !parsed_url.path().to_ascii_lowercase().ends_with(".exe")
+        {
+            return None;
+        }
+        let digest = asset
+            .get("digest")
+            .and_then(|digest| digest.as_str())?
+            .strip_prefix("sha256:")?;
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        Some((
+            url.to_string(),
+            name.to_string(),
+            digest.to_ascii_lowercase(),
+        ))
     })
 }
 
@@ -3592,7 +4523,10 @@ async fn check_github_launcher_update() -> Result<LauncherUpdateInfo, String> {
         std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "ktesla39/TheBoyz".to_string());
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|error| format!("Could not configure GitHub update check: {error}"))?;
     let resp = client
         .get(&url)
         .header(
@@ -3633,13 +4567,20 @@ async fn check_github_launcher_update() -> Result<LauncherUpdateInfo, String> {
         .unwrap_or("Bug fixes and performance improvements.")
         .to_string();
 
-    let (download_url, asset_name) = release
+    let has_update = is_newer_version(tag, &current_version);
+    let installer = release
         .get("assets")
         .and_then(|assets| assets.as_array())
-        .and_then(|assets| select_windows_installer(assets))
-        .map_or((None, None), |(url, name)| (Some(url), Some(name)));
-
-    let has_update = download_url.is_some() && is_newer_version(tag, &current_version);
+        .and_then(|assets| select_windows_installer(assets));
+    if has_update && installer.is_none() {
+        return Err(
+            "A newer GitHub release is available, but it has no verifiable Windows installer."
+                .to_string(),
+        );
+    }
+    let (download_url, asset_name, sha256) = installer.map_or((None, None, None), |asset| {
+        (Some(asset.0), Some(asset.1), Some(asset.2))
+    });
 
     Ok(LauncherUpdateInfo {
         has_update,
@@ -3649,22 +4590,34 @@ async fn check_github_launcher_update() -> Result<LauncherUpdateInfo, String> {
         release_notes,
         download_url,
         asset_name,
+        sha256,
     })
 }
 
-/// Downloads and launches the in-place NSIS installer from GitHub releases without wiping user data
+/// Downloads and launches the verified NSIS installer with its normal consent UI.
 #[tauri::command]
-async fn apply_github_launcher_update(download_url: String) -> Result<bool, String> {
+async fn apply_github_launcher_update(
+    download_url: String,
+    expected_sha256: String,
+) -> Result<bool, String> {
     let parsed_url =
         reqwest::Url::parse(&download_url).map_err(|_| "Invalid download URL.".to_string())?;
     if parsed_url.scheme() != "https"
         || parsed_url.host_str() != Some("github.com")
         || !parsed_url.path().to_ascii_lowercase().ends_with(".exe")
+        || !parsed_url
+            .path()
+            .starts_with("/ktesla39/TheBoyz/releases/download/")
+        || expected_sha256.len() != 64
+        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err("Invalid download URL.".to_string());
+        return Err("Invalid update URL or missing SHA-256 verification value.".to_string());
     }
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|error| format!("Could not configure update download: {error}"))?;
     let resp = client
         .get(&download_url)
         .header(
@@ -3679,12 +4632,38 @@ async fn apply_github_launcher_update(download_url: String) -> Result<bool, Stri
         return Err(format!("Download failed with HTTP {}.", resp.status()));
     }
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read update installer bytes: {e}"))?;
+    if resp
+        .content_length()
+        .is_some_and(|length| length > 300 * 1024 * 1024)
+    {
+        return Err("Update installer exceeds the 300 MiB safety limit.".to_string());
+    }
+    let mut stream = resp.bytes_stream();
+    let mut bytes = Vec::new();
+    const MAX_UPDATE_BYTES: usize = 300 * 1024 * 1024;
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|error| format!("Failed to read update installer bytes: {error}"))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_UPDATE_BYTES {
+            return Err("Update installer exceeds the 300 MiB safety limit.".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.is_empty() {
+        return Err("Update installer download returned an empty file.".to_string());
+    }
+    let actual_sha256 = hex::encode(Sha256::digest(&bytes));
+    if !actual_sha256.eq_ignore_ascii_case(&expected_sha256) {
+        return Err(
+            "Update installer SHA-256 verification failed. The installer was not launched."
+                .to_string(),
+        );
+    }
     let temp_dir = std::env::temp_dir();
-    let target_path = temp_dir.join("the-boys-launcher-setup-update.exe");
+    let target_path = temp_dir.join(format!(
+        "the-boys-launcher-setup-update-{}.exe",
+        Uuid::new_v4().simple()
+    ));
     fs::write(&target_path, &bytes)
         .map_err(|e| format!("Failed to write installer to temp: {e}"))?;
 
@@ -3692,7 +4671,6 @@ async fn apply_github_launcher_update(download_url: String) -> Result<bool, Stri
     {
         let mut cmd = Command::new(&target_path);
         suppress_console_window(&mut cmd);
-        cmd.arg("/S"); // NSIS silent/passive update in place
         cmd.spawn()
             .map_err(|e| format!("Failed to launch updater: {e}"))?;
         std::process::exit(0);
@@ -3732,9 +4710,13 @@ mod minecraft_status_tests {
 #[cfg(test)]
 mod path_validation_tests {
     use super::{
+        curseforge_file_lookup_payload, curseforge_loader_type, extract_modpack_overrides,
         find_version_line, safe_modpack_relative_path, validate_addon_file_name,
-        validate_instance_id, validate_mod_file_name,
+        validate_fresh_modpack_instance, validate_instance_id, validate_instance_name,
+        validate_mod_file_name,
     };
+    use std::fs;
+    use std::io::{Cursor, Write};
 
     #[test]
     fn rejects_instance_path_traversal() {
@@ -3764,9 +4746,87 @@ mod path_validation_tests {
     #[test]
     fn rejects_unsafe_modpack_paths() {
         assert!(safe_modpack_relative_path("mods/example.jar").is_ok());
+        assert!(safe_modpack_relative_path("mods\\inside\\example.jar").is_ok());
+        assert!(safe_modpack_relative_path("./mods/./inside/example.jar").is_ok());
+        assert!(safe_modpack_relative_path("mods//inside/example.jar").is_ok());
         assert!(safe_modpack_relative_path("../outside.jar").is_err());
+        assert!(safe_modpack_relative_path("./mods/../../outside.jar").is_err());
+        assert!(safe_modpack_relative_path("mods\\..\\outside.jar").is_err());
         assert!(safe_modpack_relative_path("C:/outside.jar").is_err());
-        assert!(safe_modpack_relative_path("mods\\outside.jar").is_err());
+        assert!(safe_modpack_relative_path("\\\\server\\share\\outside.jar").is_err());
+    }
+
+    #[test]
+    fn extracts_modpack_overrides_and_ignores_the_overrides_root_entry() {
+        let directory = std::env::temp_dir().join(format!(
+            "the-boys-modpack-overrides-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .add_directory("overrides/", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file(
+                "overrides/config/options.txt",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(b"test options").unwrap();
+        let archive_bytes = writer.finish().unwrap().into_inner();
+        let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes)).unwrap();
+
+        assert_eq!(
+            extract_modpack_overrides(&mut archive, &directory).unwrap(),
+            12
+        );
+        assert_eq!(
+            fs::read(directory.join("config/options.txt")).unwrap(),
+            b"test options"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn builds_the_curseforge_batch_file_request_shape() {
+        assert_eq!(
+            curseforge_file_lookup_payload(&[123, 456]),
+            serde_json::json!({"fileIds":[123,456]})
+        );
+        assert_eq!(curseforge_loader_type(Some("Fabric")), Some(4));
+        assert_eq!(curseforge_loader_type(Some("forge")), Some(1));
+        assert_eq!(curseforge_loader_type(Some("vanilla")), None);
+    }
+
+    #[test]
+    fn modpacks_only_target_new_empty_instances() {
+        let directory = std::env::temp_dir().join(format!(
+            "the-boys-empty-modpack-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("instance.json"),
+            r#"{"id":"inst_new","name":"New Pack"}"#,
+        )
+        .unwrap();
+        for folder in ["mods", "resourcepacks", "shaderpacks", "saves"] {
+            fs::create_dir(directory.join(folder)).unwrap();
+        }
+        assert!(validate_fresh_modpack_instance(&directory, "inst_new").is_ok());
+
+        fs::write(directory.join("mods").join("existing.jar"), b"existing").unwrap();
+        assert!(validate_fresh_modpack_instance(&directory, "inst_new").is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn validates_instance_folder_names() {
+        assert!(validate_instance_name("Vanilla Plus 1.21").is_ok());
+        assert!(validate_instance_name("name.").is_err());
+        assert!(validate_instance_name("CON").is_err());
+        assert!(validate_instance_name("bad/name").is_err());
     }
 
     #[test]
@@ -3801,6 +4861,30 @@ mod path_validation_tests {
             .as_deref(),
             Some("DirectX 12")
         );
+    }
+}
+
+#[cfg(test)]
+mod curseforge_response_tests {
+    use super::CurseForgeSearchResponse;
+
+    #[test]
+    fn accepts_sparse_search_results() {
+        let response: CurseForgeSearchResponse = serde_json::from_value(serde_json::json!({
+            "data": [{
+                "id": 1,
+                "name": "Example",
+                "slug": "example",
+                "summary": null,
+                "downloadCount": 0,
+                "latestFilesIndexes": null
+            }],
+            "pagination": {"totalCount": 1}
+        }))
+        .unwrap();
+        assert_eq!(response.data.len(), 1);
+        assert!(response.data[0].summary.is_none());
+        assert!(response.data[0].latest_files_indexes.is_none());
     }
 }
 
@@ -3841,13 +4925,44 @@ mod shortcut_icon_tests {
 
 #[cfg(test)]
 mod oauth_callback_tests {
-    use super::parse_oauth_callback;
+    use super::{microsoft_oauth_form, parse_oauth_callback, MICROSOFT_AUTH_SCOPES};
 
     #[test]
     fn parses_encoded_authorization_codes() {
         assert_eq!(
             parse_oauth_callback("GET /callback?code=abc%2F123&state=x HTTP/1.1\r\n").unwrap(),
             "abc/123"
+        );
+    }
+
+    #[test]
+    fn always_includes_the_microsoft_scope_in_token_forms() {
+        let form = microsoft_oauth_form(&[
+            ("client_id", "client"),
+            ("grant_type", "authorization_code"),
+            ("scope", ""),
+        ]);
+        assert_eq!(
+            form.get("scope").map(String::as_str),
+            Some(MICROSOFT_AUTH_SCOPES)
+        );
+        assert_eq!(
+            form.get("grant_type").map(String::as_str),
+            Some("authorization_code")
+        );
+        let request = reqwest::Client::new()
+            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+            .form(&form)
+            .build()
+            .unwrap();
+        let body = std::str::from_utf8(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        let encoded = reqwest::Url::parse(&format!("https://example.test/?{body}")).unwrap();
+        assert_eq!(
+            encoded
+                .query_pairs()
+                .find(|(key, _)| key == "scope")
+                .map(|(_, value)| value.into_owned()),
+            Some(MICROSOFT_AUTH_SCOPES.to_string())
         );
     }
 
@@ -3867,18 +4982,26 @@ mod updater_tests {
     use super::select_windows_installer;
 
     #[test]
-    fn selects_nsis_installer_instead_of_msi_package() {
+    fn selects_only_a_sha256_verifiable_nsis_installer() {
         let assets = vec![
             serde_json::json!({"name":"The Boys.msi","browser_download_url":"https://github.com/x/y/releases/download/v1/The%20Boys.msi"}),
-            serde_json::json!({"name":"The Boys.exe","browser_download_url":"https://github.com/x/y/releases/download/v1/The%20Boys.exe"}),
+            serde_json::json!({"name":"The Boys.exe","browser_download_url":"https://github.com/ktesla39/TheBoyz/releases/download/v1/The%20Boys.exe","digest":format!("sha256:{}", "a".repeat(64))}),
         ];
         assert_eq!(
             select_windows_installer(&assets),
             Some((
-                "https://github.com/x/y/releases/download/v1/The%20Boys.exe".to_string(),
-                "The Boys.exe".to_string()
+                "https://github.com/ktesla39/TheBoyz/releases/download/v1/The%20Boys.exe"
+                    .to_string(),
+                "The Boys.exe".to_string(),
+                "a".repeat(64),
             ))
         );
+        assert!(select_windows_installer(&[
+            serde_json::json!({"name":"The Boys.exe","browser_download_url":"https://github.com/ktesla39/TheBoyz/releases/download/v1/The%20Boys.exe"})
+        ]).is_none());
+        assert!(select_windows_installer(&[
+            serde_json::json!({"name":"The Boys.exe","browser_download_url":"https://attacker.example/ktesla39/TheBoyz/releases/download/v1/The%20Boys.exe","digest":format!("sha256:{}", "a".repeat(64))})
+        ]).is_none());
     }
 }
 
@@ -3984,6 +5107,108 @@ mod import_tests {
     }
 
     #[test]
+    fn resolves_sklauncher_profile_metadata_and_nested_game_data() {
+        let directory = test_directory("sklauncher-nested");
+        let game_directory = directory.join(".minecraft");
+        fs::create_dir_all(game_directory.join("saves")).unwrap();
+        fs::write(
+            directory.join("sklauncher_profiles.json"),
+            r#"{"profiles":[{"version":"1.20.1-neoforge-20.4.237"}]}"#,
+        )
+        .unwrap();
+
+        let (game_dir, metadata_dir) = resolve_import_directories(&directory).unwrap();
+        assert_eq!(game_dir, game_directory);
+        assert_eq!(metadata_dir, directory);
+        assert_eq!(
+            detect_import_metadata(&metadata_dir).unwrap(),
+            (
+                "1.20.1".to_string(),
+                "neoforge".to_string(),
+                Some("20.4.237".to_string())
+            )
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_import_from_a_minecraft_version_directory() {
+        let directory = test_directory("version-folder-import");
+        let game_directory = directory.join(".minecraft");
+        let identifier = "KTESLA 1.21.11";
+        let version_directory = game_directory.join("versions").join(identifier);
+        fs::create_dir_all(version_directory.join("mods")).unwrap();
+        fs::create_dir_all(version_directory.join("saves").join("ProfileWorld")).unwrap();
+        fs::create_dir_all(game_directory.join("mods")).unwrap();
+        fs::create_dir_all(game_directory.join("saves").join("UnrelatedWorld")).unwrap();
+        fs::write(game_directory.join("mods").join("root.jar"), b"root mod").unwrap();
+        fs::write(
+            version_directory.join("mods").join("profile.jar"),
+            b"profile mod",
+        )
+        .unwrap();
+        fs::write(
+            version_directory.join(format!("{identifier}.json")),
+            r#"{"id":"KTESLA 1.21.11","inheritsFrom":"1.21.1","libraries":[{"name":"net.fabricmc:fabric-loader:0.16.10"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            version_directory.join(format!("{identifier}.jar")),
+            b"runtime",
+        )
+        .unwrap();
+
+        let (game_dir, metadata_dir) = resolve_import_directories(&version_directory).unwrap();
+        assert_eq!(game_dir, version_directory);
+        assert_eq!(metadata_dir, version_directory);
+        assert_eq!(
+            detect_import_metadata(&metadata_dir).unwrap(),
+            (
+                "1.21.1".to_string(),
+                "fabric".to_string(),
+                Some("0.16.10".to_string())
+            )
+        );
+
+        let target = directory.join("launcher-instance");
+        copy_imported_game_data(&game_dir, &target).unwrap();
+        assert_eq!(
+            fs::read(target.join("mods").join("profile.jar")).unwrap(),
+            b"profile mod"
+        );
+        assert!(!target.join("mods").join("root.jar").exists());
+        assert!(target.join("saves").join("ProfileWorld").is_dir());
+        assert!(!target.join("saves").join("UnrelatedWorld").exists());
+        assert!(!target.join("versions").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_standard_version_folder_to_its_shared_game_directory() {
+        let directory = test_directory("standard-version-import");
+        let game_directory = directory.join(".minecraft");
+        let identifier = "1.21.1";
+        let version_directory = game_directory.join("versions").join(identifier);
+        fs::create_dir_all(&version_directory).unwrap();
+        fs::create_dir_all(game_directory.join("saves")).unwrap();
+        fs::write(
+            version_directory.join(format!("{identifier}.json")),
+            r#"{"id":"1.21.1"}"#,
+        )
+        .unwrap();
+        fs::write(
+            version_directory.join(format!("{identifier}.jar")),
+            b"runtime",
+        )
+        .unwrap();
+
+        let (game_dir, metadata_dir) = resolve_import_directories(&version_directory).unwrap();
+        assert_eq!(game_dir, game_directory);
+        assert_eq!(metadata_dir, version_directory);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn copies_instance_data_without_touching_launcher_runtime_files() {
         let source = test_directory("import-source");
         let target = test_directory("import-target");
@@ -4034,6 +5259,55 @@ mod import_tests {
     }
 }
 
+#[cfg(test)]
+mod launcher_icon_tests {
+    use super::{build_png_icon, validate_shortcut_icon};
+    use base64::Engine as _;
+
+    fn generated_png() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 256, 256);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&vec![0; 256 * 256 * 4]).unwrap();
+        }
+        bytes
+    }
+
+    fn malformed_png_fixture() -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADWklEQVR4nO3OoQEAMAjAME7f53BGxSLiM/N2gU/lAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgA6eQDo5AGgkweATh4AOnkA6OQBoJMHgE4eADp5AOjkAaCTB4BOHgAyB/rgJWMrjdbKAAAAAElFTkSuQmCC")
+            .unwrap()
+    }
+
+    #[test]
+    fn builds_a_valid_windows_icon_from_a_256_pixel_png() {
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAABFUlEQVR4nO3BMQEAAADCoPVP7WsIoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAMBPAABPO1TCQAAAABJRU5ErkJggg==")
+            .unwrap();
+        assert!(build_png_icon(&png).is_err());
+        assert!(build_png_icon(&malformed_png_fixture()).is_err());
+        let icon = build_png_icon(&generated_png()).unwrap();
+        assert!(validate_shortcut_icon(&icon).is_ok());
+        assert_eq!(&icon[18..22], &22u32.to_le_bytes());
+        assert_eq!(&icon[22..], generated_png().as_slice());
+    }
+
+    #[test]
+    fn rejects_wrong_size_or_malformed_launcher_icons() {
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAABFUlEQVR4nO3BMQEAAADCoPVP7WsIoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAMBPAABPO1TCQAAAABJRU5ErkJggg==")
+            .unwrap();
+        assert!(build_png_icon(&png).is_err());
+        let mut bad_dimensions = generated_png();
+        bad_dimensions[19] = 128;
+        assert!(build_png_icon(&bad_dimensions).is_err());
+        assert!(build_png_icon(b"not a png").is_err());
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -4069,6 +5343,9 @@ pub fn run() {
                 tray.set_icon(Some(icon.clone()))?;
             }
             app.manage(tray);
+            if let Err(error) = restore_saved_launcher_icon(app.handle()) {
+                log::error!("Could not restore the saved launcher icon: {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4093,10 +5370,13 @@ pub fn run() {
             verify_file_hash,
             save_skin_file,
             ping_minecraft_server,
+            apply_launcher_icon,
             create_desktop_shortcut,
             get_startup_instance_id,
             list_instances,
             create_instance,
+            rename_instance_folder,
+            open_instance_folder,
             delete_instance,
             clone_instance,
             list_instance_mods,

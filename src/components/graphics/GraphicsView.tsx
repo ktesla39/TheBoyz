@@ -154,7 +154,7 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
           </div>
 
           <div className="p-4 rounded-xl bg-black/40 border border-white/5">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold font-display">Driver API Support</div>
+            <div className="text-[10px] text-slate-400 uppercase font-semibold font-display">Graphics API Diagnostics</div>
             <div className="flex items-center gap-3 mt-2 text-xs font-mono">
               <span className="flex items-center gap-1 text-emerald-400 font-bold">
                 {apiVersions?.opengl || hardware.supportedApis.opengl ? (
@@ -162,7 +162,7 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
                 ) : (
                   <Info className="w-3.5 h-3.5" />
                 )}
-                {apiVersions?.opengl ?? (apiVersions ? apiVersions.opengl_error : hardware.supportedApis.opengl ? 'WebGL detected' : 'WebGL unavailable')}
+                {apiVersions?.opengl ?? (apiVersions ? apiVersions.opengl_error : 'Native OpenGL capability not probed')}
               </span>
               <span className={`flex items-center gap-1 font-bold ${apiVersions?.vulkan || hardware.supportedApis.vulkan === true ? 'text-emerald-400' : 'text-slate-500'}`}>
                 {apiVersions?.vulkan || hardware.supportedApis.vulkan ? <CheckCircle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}

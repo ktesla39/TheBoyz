@@ -78,6 +78,36 @@ export interface TauriImportedInstance {
   }>;
 }
 
+export async function invokeCreateInstance(
+  id: string,
+  name: string,
+  gameVersion: string,
+  loader: string,
+): Promise<string> {
+  return invokeTauri<string>('create_instance', {
+    id,
+    name,
+    gameVersion,
+    loader,
+  });
+}
+
+export async function invokeDeleteInstance(id: string): Promise<boolean> {
+  return invokeTauri<boolean>('delete_instance', { id });
+}
+
+export async function invokeRenameInstanceFolder(id: string, name: string): Promise<string> {
+  return invokeTauri<string>('rename_instance_folder', { id, name });
+}
+
+export async function invokeOpenInstanceFolder(
+  id: string,
+  name: string,
+  customGameDir?: string,
+): Promise<void> {
+  return invokeTauri<void>('open_instance_folder', { id, name, customGameDir });
+}
+
 export async function invokeImportMinecraftInstance(sourcePath: string): Promise<TauriImportedInstance> {
   return invokeTauri<TauriImportedInstance>('import_minecraft_instance', {
     sourcePath,
@@ -221,6 +251,10 @@ export async function invokeCreateDesktopShortcut(
   return invokeTauri('create_desktop_shortcut', { instanceName, instanceId, iconIcoBase64 });
 }
 
+export async function invokeApplyLauncherIcon(pngBase64: string): Promise<number> {
+  return invokeTauri<number>('apply_launcher_icon', { pngBase64 });
+}
+
 export async function invokeGetStartupInstanceId(): Promise<string | null> {
   return invokeTauri<string | null>('get_startup_instance_id');
 }
@@ -268,6 +302,7 @@ export async function invokeDeleteModFile(
 
 export interface TauriInstallAddonRequest {
   instance_id: string;
+  instance_name?: string;
   addon_id: string;
   addon_name: string;
   addon_type: string;
@@ -312,6 +347,7 @@ export interface TauriLauncherUpdateInfo {
   release_notes: string;
   download_url: string | null;
   asset_name: string | null;
+  sha256: string | null;
 }
 
 export async function invokeInstallInstanceAddon(
@@ -392,6 +428,9 @@ export async function invokeCheckGithubLauncherUpdate(): Promise<TauriLauncherUp
   return invokeTauri<TauriLauncherUpdateInfo>('check_github_launcher_update');
 }
 
-export async function invokeApplyGithubLauncherUpdate(downloadUrl: string): Promise<boolean> {
-  return invokeTauri<boolean>('apply_github_launcher_update', { downloadUrl });
+export async function invokeApplyGithubLauncherUpdate(
+  downloadUrl: string,
+  expectedSha256: string,
+): Promise<boolean> {
+  return invokeTauri<boolean>('apply_github_launcher_update', { downloadUrl, expectedSha256 });
 }
