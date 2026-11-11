@@ -1,6 +1,6 @@
 [package]
 name = "the-boys-launcher"
-version = "1.0.0"
+version = "1.0.1"
 description = "A Next-Generation Minecraft Launcher Built with Rust, Tauri, React & TypeScript"
 authors = ["ktesla"]
 edition = "2021"
@@ -14,7 +14,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 base64 = "0.22"
-tauri = { version = "2.0", features = [] }
+tauri = { version = "2.0", features = ["tray-icon"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-dialog = "2.0"

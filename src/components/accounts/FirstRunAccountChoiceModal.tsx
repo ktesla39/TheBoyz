@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { MicrosoftBrandIcon, OfflineShieldIcon } from '../icons/MinecraftIcons';
 import { playMinecraftClickSound } from '../../services/soundService';
 
@@ -16,9 +17,9 @@ export const FirstRunAccountChoiceModal: React.FC<FirstRunAccountChoiceModalProp
       role="dialog"
       aria-modal="true"
       aria-labelledby="first-run-account-title"
-      className="card-obsidian w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 shadow-[0_16px_50px_rgba(0,0,0,0.8)]"
+      className="card-obsidian w-full max-w-xl overflow-hidden rounded-2xl"
     >
-      <header className="border-b border-white/5 bg-[#0a0d14] px-6 py-5">
+      <header className="border-b border-white/5 bg-[var(--mc-panel)] px-6 py-5">
         <span className="text-[10px] font-mono font-bold uppercase tracking-[0.18em] text-[var(--mc-accent)]">
           Welcome to The Boys
         </span>
@@ -30,18 +31,22 @@ export const FirstRunAccountChoiceModal: React.FC<FirstRunAccountChoiceModalProp
         </p>
       </header>
 
-      <div className="grid gap-3 p-6 sm:grid-cols-2">
+      <div className="grid gap-3 p-5">
         <button
           type="button"
           onClick={() => {
             playMinecraftClickSound();
             onChooseOffline();
           }}
-          className="btn-mc btn-mc-green flex min-h-32 flex-col items-center justify-center gap-3 rounded-xl px-4 py-5 text-white"
+          data-tone="amber"
+          className="choice-card group flex min-h-24 items-center gap-4 rounded-xl px-4 py-4 text-left"
         >
-          <OfflineShieldIcon className="h-7 w-7 text-amber-300" />
-          <span className="text-sm font-black font-display">Offline Account</span>
-          <span className="text-center text-[11px] font-medium text-white/75">Create a local player profile</span>
+          <span className="choice-icon"><OfflineShieldIcon className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--mc-text)]">Offline profile</span>
+            <span className="mt-1 block text-xs text-[var(--mc-muted)]">Create a local player profile for offline play.</span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-[var(--mc-muted)] transition-transform group-hover:translate-x-0.5" />
         </button>
         <button
           type="button"
@@ -49,11 +54,15 @@ export const FirstRunAccountChoiceModal: React.FC<FirstRunAccountChoiceModalProp
             playMinecraftClickSound();
             onChooseMicrosoft();
           }}
-          className="btn-mc btn-mc-green flex min-h-32 flex-col items-center justify-center gap-3 rounded-xl px-4 py-5 text-white"
+          data-tone="ice"
+          className="choice-card group flex min-h-24 items-center gap-4 rounded-xl px-4 py-4 text-left"
         >
-          <MicrosoftBrandIcon className="h-7 w-7" />
-          <span className="text-sm font-black font-display">Microsoft Account</span>
-          <span className="text-center text-[11px] font-medium text-white/75">Sign in with your Microsoft account</span>
+          <span className="choice-icon"><MicrosoftBrandIcon className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--mc-text)]">Microsoft account</span>
+            <span className="mt-1 block text-xs text-[var(--mc-muted)]">Sign in to use your Xbox profile and owned games.</span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-[var(--mc-muted)] transition-transform group-hover:translate-x-0.5" />
         </button>
       </div>
     </section>

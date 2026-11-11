@@ -22,9 +22,22 @@ import { useEffect, useState } from 'react';
 
 const repository = import.meta.env.VITE_GITHUB_REPOSITORY?.trim();
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
-const releaseUrl = repository
-  ? `https://github.com/${repository}/releases/latest`
+const repositoryParts = repository?.match(/^([\w.-]+)\/([\w.-]+)$/);
+const releasesApiUrl = repositoryParts
+  ? `https://api.github.com/repos/${encodeURIComponent(repositoryParts[1])}/${encodeURIComponent(repositoryParts[2])}/releases?per_page=100`
   : undefined;
+
+type DownloadState =
+  | { status: 'loading' }
+  | { status: 'available'; url: string }
+  | { status: 'unavailable'; message: string };
+
+interface GitHubRelease {
+  assets?: Array<{
+    name?: string;
+    browser_download_url?: string;
+  }>;
+}
 
 const features = [
   {
@@ -58,8 +71,86 @@ function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     window.localStorage.getItem('the-boys-website-theme') === 'light' ? 'light' : 'dark',
   );
+  const [downloadState, setDownloadState] = useState<DownloadState>(() =>
+    releasesApiUrl
+      ? { status: 'loading' }
+      : { status: 'unavailable', message: 'Add a valid GitHub repository to enable downloads.' },
+  );
+  const [retryCount, setRetryCount] = useState(0);
 
   const closeMenu = () => setMenuOpen(false);
+
+  useEffect(() => {
+    if (!releasesApiUrl) return;
+
+    const controller = new AbortController();
+    setDownloadState({ status: 'loading' });
+
+    void fetch(releasesApiUrl, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`GitHub returned ${response.status}`);
+        }
+
+        const releases: GitHubRelease[] = await response.json();
+        const installer = releases
+          .flatMap((release) => release.assets ?? [])
+          .find((asset) =>
+            typeof asset.name === 'string'
+            && /\.exe$/i.test(asset.name)
+            && typeof asset.browser_download_url === 'string',
+          );
+
+        if (!installer?.browser_download_url) {
+          setDownloadState({
+            status: 'unavailable',
+            message: 'No published release includes a Windows installer yet.',
+          });
+          return;
+        }
+
+        setDownloadState({ status: 'available', url: installer.browser_download_url });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+
+        setDownloadState({
+          status: 'unavailable',
+          message: error instanceof Error
+            ? error.message
+            : 'Could not load the latest Windows installer.',
+        });
+      });
+
+    return () => controller.abort();
+  }, [retryCount]);
+
+  const downloadAction = (className: string) => {
+    if (downloadState.status === 'available') {
+      return (
+        <a className={className} href={downloadState.url}>
+          <Download size={19} /> Download for Windows <ArrowRight size={18} />
+        </a>
+      );
+    }
+
+    return (
+      <button
+        className={`${className} button-disabled`}
+        type="button"
+        disabled={downloadState.status === 'loading'}
+        aria-live="polite"
+        title={downloadState.status === 'unavailable' ? downloadState.message : undefined}
+        onClick={() => setRetryCount((count) => count + 1)}
+      >
+        <MonitorDown size={19} />
+        {downloadState.status === 'loading' ? 'Finding latest installer…' : 'Installer unavailable — retry'}
+      </button>
+    );
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -108,10 +199,8 @@ function App() {
           >
             <Github size={18} /> Source
           </a>
-          {releaseUrl ? (
-            <a className="button button-small" href={releaseUrl} target="_blank" rel="noreferrer">
-              <Download size={17} /> Get the launcher
-            </a>
+          {releasesApiUrl ? (
+            downloadAction('button button-small')
           ) : (
             <span className="release-unconfigured">Releases coming soon</span>
           )}
@@ -127,10 +216,8 @@ function App() {
             More time in the world you came to build.
           </p>
           <div className="hero-actions">
-            {releaseUrl ? (
-              <a className="button button-primary" href={releaseUrl} target="_blank" rel="noreferrer">
-                <Download size={19} /> Download for Windows <ArrowRight size={18} />
-              </a>
+            {releasesApiUrl ? (
+              downloadAction('button button-primary')
             ) : (
               <div className="button button-disabled" aria-disabled="true">
                 <MonitorDown size={19} /> Add GitHub repo in .env to enable downloads
@@ -227,10 +314,8 @@ function App() {
         <div className="eyebrow">YOUR NEXT ADVENTURE IS CLOSER</div>
         <h2>Ready when<br />you are.</h2>
         <p>Bring your ideas. The Boys will help with the rest.</p>
-        {releaseUrl ? (
-          <a className="button button-primary" href={releaseUrl} target="_blank" rel="noreferrer">
-            <Download size={19} /> Get The Boys Launcher <ArrowRight size={18} />
-          </a>
+        {releasesApiUrl ? (
+          downloadAction('button button-primary')
         ) : (
           <p className="config-hint">Set <code>VITE_GITHUB_REPOSITORY</code> in <code>.env</code> to publish the release download.</p>
         )}

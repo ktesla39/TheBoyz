@@ -10,11 +10,31 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
-use tauri::{AppHandle, Emitter};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager};
+use uuid::Uuid;
 
 mod minecraft;
 
 static RUNNING_PROCESSES: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+
+fn suppress_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
+fn suppress_tokio_console_window(command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    #[cfg(not(windows))]
+    let _ = command;
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LaunchRequest {
@@ -131,6 +151,17 @@ struct InstanceMetadata {
     name: String,
     game_version: String,
     loader: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportedInstanceInfo {
+    id: String,
+    name: String,
+    game_version: String,
+    loader: String,
+    loader_version: Option<String>,
+    custom_game_dir: String,
+    mods: Vec<ModItem>,
 }
 
 fn validate_instance_id(id: &str) -> Result<(), String> {
@@ -562,19 +593,21 @@ async fn launch_game(app: AppHandle, payload: LaunchRequest) -> Result<LaunchRes
     )
     .await?;
     log::info!("{install_result}");
-    minecraft::emit_launcher_progress("preparing", "Preparing Java and game launch settings", None, 0, None);
+    minecraft::emit_launcher_progress(
+        "preparing",
+        "Preparing Java and game launch settings",
+        None,
+        0,
+        None,
+    );
     let prepared = minecraft::prepare_launch(&root, &payload)?;
     let java_bin = prepared.java_path;
     let required_java_version = prepared.required_java_version;
-    let mut args = prepared.args;
-    if let Some(srv) = payload.server_address {
-        if !srv.trim().is_empty() {
-            args.push("--server".to_string());
-            args.push(srv.trim().to_string());
-        }
-    }
+    let args = prepared.args;
 
-    let java_version_output = tokio::process::Command::new(&java_bin)
+    let mut java_version_command = tokio::process::Command::new(&java_bin);
+    suppress_tokio_console_window(&mut java_version_command);
+    let java_version_output = java_version_command
         .arg("-version")
         .output()
         .await
@@ -617,7 +650,9 @@ async fn launch_game(app: AppHandle, payload: LaunchRequest) -> Result<LaunchRes
         }
         processes.remove(&payload.instance_id);
     }
-    let child = Command::new(&java_bin)
+    let mut game_command = Command::new(&java_bin);
+    suppress_console_window(&mut game_command);
+    let child = game_command
         .args(&args)
         .current_dir(&prepared.game_dir)
         .spawn()
@@ -664,7 +699,10 @@ fn java_major_version(version_output: &str) -> Option<u32> {
 }
 
 #[tauri::command]
-async fn install_minecraft_instance(app: AppHandle, request: minecraft::InstallRequest) -> Result<String, String> {
+async fn install_minecraft_instance(
+    app: AppHandle,
+    request: minecraft::InstallRequest,
+) -> Result<String, String> {
     minecraft::register_progress_app(app);
     minecraft::install_instance(&get_app_data_dir()?, request).await
 }
@@ -718,7 +756,9 @@ fn is_game_running(pid: u32) -> Result<bool, String> {
 }
 
 fn inspect_java_binary(version_binary: &Path, launch_binary: &Path) -> Option<JavaInstallation> {
-    let output = Command::new(version_binary).arg("-version").output().ok()?;
+    let mut command = Command::new(version_binary);
+    suppress_console_window(&mut command);
+    let output = command.arg("-version").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -761,103 +801,125 @@ fn inspect_java_binary(version_binary: &Path, launch_binary: &Path) -> Option<Ja
     })
 }
 
-/// Detects installed Java runtimes across system directories and PATH
+fn add_java_candidate(
+    version_binary: &Path,
+    preferred_launch_binary: &Path,
+    installations: &mut Vec<JavaInstallation>,
+) {
+    if !version_binary.is_file() {
+        return;
+    }
+    let launch_binary = if preferred_launch_binary.is_file() {
+        preferred_launch_binary
+    } else {
+        version_binary
+    };
+    let candidate_path = launch_binary
+        .canonicalize()
+        .unwrap_or_else(|_| launch_binary.to_path_buf());
+    if installations.iter().any(|installed| {
+        Path::new(&installed.path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&installed.path))
+            == candidate_path
+    }) {
+        return;
+    }
+    if let Some(installation) = inspect_java_binary(version_binary, launch_binary) {
+        installations.push(installation);
+    }
+}
+
+fn scan_java_directory(
+    root: &Path,
+    remaining_depth: usize,
+    installations: &mut Vec<JavaInstallation>,
+) {
+    let version_name = if cfg!(target_os = "windows") {
+        "java.exe"
+    } else {
+        "java"
+    };
+    let launch_name = if cfg!(target_os = "windows") {
+        "javaw.exe"
+    } else {
+        "java"
+    };
+    let version_binary = root.join("bin").join(version_name);
+    let launch_binary = root.join("bin").join(launch_name);
+    add_java_candidate(&version_binary, &launch_binary, installations);
+    if remaining_depth == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if matches!(
+                name.as_str(),
+                "node_modules" | "windowsapps" | "cache" | "logs" | "assets" | "libraries"
+            ) {
+                continue;
+            }
+            scan_java_directory(&entry.path(), remaining_depth - 1, installations);
+        }
+    }
+}
+
+/// Detects installed Java runtimes from standard locations, user runtimes, JAVA_HOME, and PATH.
 #[tauri::command]
 fn detect_java_installations() -> Result<Vec<JavaInstallation>, String> {
     let mut installations = Vec::new();
-
-    let candidate_paths = if cfg!(target_os = "windows") {
-        vec![
-            r"C:\Program Files\Java",
-            r"C:\Program Files\Eclipse Adoptium",
-            r"C:\Program Files\BellSoft",
-            r"C:\Program Files\Amazon Corretto",
-            r"C:\Program Files (x86)\Java",
-        ]
-    } else if cfg!(target_os = "macos") {
-        vec!["/Library/Java/JavaVirtualMachines"]
-    } else {
-        vec!["/usr/lib/jvm", "/usr/java"]
-    };
-
-    for base in candidate_paths {
-        let p = Path::new(base);
-        if p.exists() && p.is_dir() {
-            if let Ok(entries) = fs::read_dir(p) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let bin_java = if cfg!(target_os = "windows") {
-                        path.join("bin").join("javaw.exe")
-                    } else {
-                        path.join("bin").join("java")
-                    };
-
-                    if bin_java.exists() {
-                        let output = match Command::new(&bin_java).arg("-version").output() {
-                            Ok(output) if output.status.success() => output,
-                            _ => continue,
-                        };
-                        let version_output = format!(
-                            "{}{}",
-                            String::from_utf8_lossy(&output.stdout),
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                        let full_version = version_output
-                            .lines()
-                            .find(|line| line.contains("version"))
-                            .and_then(|line| line.split('"').nth(1))
-                            .map(str::to_string);
-                        let Some(full_version) = full_version else {
-                            continue;
-                        };
-                        let version_parts: Vec<&str> = full_version.split('.').collect();
-                        let major_text = if version_parts.first() == Some(&"1") {
-                            version_parts.get(1)
-                        } else {
-                            version_parts.first()
-                        };
-                        let Some(major) = major_text.and_then(|part| part.parse::<u32>().ok())
-                        else {
-                            continue;
-                        };
-                        let path_str = bin_java.to_string_lossy().to_string();
-                        let first_line = version_output
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                            .to_lowercase();
-                        let vendor = if first_line.contains("openjdk") {
-                            Some("OpenJDK".to_string())
-                        } else if first_line.contains("java(tm)") {
-                            Some("Oracle Java".to_string())
-                        } else {
-                            None
-                        };
-                        let is_64_bit = if version_output.contains("64-Bit")
-                            || version_output.contains("64-bit")
-                        {
-                            Some(true)
-                        } else if version_output.contains("32-Bit")
-                            || version_output.contains("32-bit")
-                        {
-                            Some(false)
-                        } else {
-                            None
-                        };
-
-                        installations.push(JavaInstallation {
-                            path: path_str,
-                            major_version: major,
-                            full_version,
-                            vendor,
-                            is_64_bit,
-                        });
-                    }
-                }
+    let mut roots = Vec::<PathBuf>::new();
+    if let Some(java_home) = std::env::var_os("JAVA_HOME") {
+        roots.push(PathBuf::from(java_home));
+    }
+    if cfg!(target_os = "windows") {
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            let base = PathBuf::from(program_files);
+            for vendor in [
+                "Java",
+                "Microsoft",
+                "Eclipse Adoptium",
+                "BellSoft",
+                "Amazon Corretto",
+                "Zulu",
+            ] {
+                roots.push(base.join(vendor));
             }
         }
+        if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+            roots.push(PathBuf::from(program_files_x86).join("Java"));
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let local = PathBuf::from(local_app_data);
+            roots.extend([
+                local.join("Programs").join("Microsoft"),
+                local.join("Programs").join("Eclipse Adoptium"),
+                local.join("Programs").join("Eclipse Foundation"),
+            ]);
+        }
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            roots.push(PathBuf::from(app_data).join(".minecraft").join("runtime"));
+        }
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            let profile = PathBuf::from(user_profile);
+            roots.push(profile.join(".minecraft").join("runtime"));
+            roots.push(profile.join(".jdks"));
+        }
+    } else if cfg!(target_os = "macos") {
+        roots.push(PathBuf::from("/Library/Java/JavaVirtualMachines"));
+    } else {
+        roots.extend([PathBuf::from("/usr/lib/jvm"), PathBuf::from("/usr/java")]);
     }
 
+    for root in roots {
+        if root.is_dir() {
+            scan_java_directory(&root, 5, &mut installations);
+        }
+    }
     if let Some(path_var) = std::env::var_os("PATH") {
         let version_name = if cfg!(target_os = "windows") {
             "java.exe"
@@ -870,27 +932,14 @@ fn detect_java_installations() -> Result<Vec<JavaInstallation>, String> {
             "java"
         };
         for directory in std::env::split_paths(&path_var) {
-            let version_binary = directory.join(version_name);
-            if !version_binary.is_file() {
-                continue;
-            }
-            let preferred_launch = directory.join(launch_name);
-            let launch_binary = if preferred_launch.is_file() {
-                preferred_launch
-            } else {
-                version_binary.clone()
-            };
-            let is_duplicate = installations.iter().any(|installed| {
-                Path::new(&installed.path).canonicalize().ok() == launch_binary.canonicalize().ok()
-            });
-            if !is_duplicate {
-                if let Some(installation) = inspect_java_binary(&version_binary, &launch_binary) {
-                    installations.push(installation);
-                }
-            }
+            add_java_candidate(
+                &directory.join(version_name),
+                &directory.join(launch_name),
+                &mut installations,
+            );
         }
     }
-
+    installations.sort_by_key(|installation| installation.major_version);
     Ok(installations)
 }
 
@@ -901,7 +950,9 @@ fn validate_java_path(java_path: String) -> Result<bool, String> {
     if !path.is_file() {
         return Ok(false);
     }
-    let output = Command::new(path).arg("-version").output();
+    let mut command = Command::new(path);
+    suppress_console_window(&mut command);
+    let output = command.arg("-version").output();
     Ok(output.is_ok_and(|result| result.status.success()))
 }
 
@@ -1212,6 +1263,426 @@ fn list_instances() -> Result<Vec<InstanceItem>, String> {
     Ok(list)
 }
 
+fn version_from_identifier(identifier: &str) -> Option<String> {
+    identifier
+        .split(|character: char| !character.is_ascii_digit() && character != '.')
+        .find(|candidate| {
+            let parts: Vec<_> = candidate.split('.').collect();
+            candidate.starts_with("1.")
+                && parts.len() >= 2
+                && parts
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+        .map(str::to_string)
+}
+
+fn loader_from_identifier(identifier: &str) -> (String, Option<String>) {
+    for (marker, loader) in [
+        ("fabric-loader-", "fabric"),
+        ("fabric-", "fabric"),
+        ("quilt-loader-", "quilt"),
+        ("quilt-", "quilt"),
+        ("-forge-", "forge"),
+        ("forge-", "forge"),
+        ("-neoforge-", "neoforge"),
+        ("neoforge-", "neoforge"),
+    ] {
+        if let Some(version) = identifier
+            .split_once(marker)
+            .map(|(_, suffix)| suffix.split('-').next().unwrap_or_default())
+            .filter(|version| !version.is_empty())
+        {
+            return (loader.to_string(), Some(version.to_string()));
+        }
+    }
+    ("vanilla".to_string(), None)
+}
+
+fn detect_import_metadata(game_dir: &Path) -> Result<(String, String, Option<String>), String> {
+    for pack_file in ["mmc-pack.json", "manifest.json"] {
+        let path = game_dir.join(pack_file);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let metadata: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Invalid {}: {error}", path.display()))?;
+        if pack_file == "mmc-pack.json" {
+            if let Some(components) = metadata
+                .get("components")
+                .and_then(serde_json::Value::as_array)
+            {
+                let mut game_version = None;
+                let mut loader = ("vanilla".to_string(), None);
+                for component in components {
+                    let id = component
+                        .get("uid")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let version = component
+                        .get("version")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    if id == "net.minecraft" {
+                        game_version = Some(version.to_string());
+                    } else if id.contains("fabric-loader") {
+                        loader = ("fabric".to_string(), Some(version.to_string()));
+                    } else if id.contains("quilt-loader") {
+                        loader = ("quilt".to_string(), Some(version.to_string()));
+                    } else if id.contains("neoforge") {
+                        loader = ("neoforge".to_string(), Some(version.to_string()));
+                    } else if id.contains("forge") {
+                        loader = ("forge".to_string(), Some(version.to_string()));
+                    }
+                }
+                if let Some(game_version) = game_version {
+                    return Ok((game_version, loader.0, loader.1));
+                }
+            }
+        } else {
+            if let Some(game_version) = metadata
+                .get("minecraft")
+                .and_then(|minecraft| minecraft.get("version"))
+                .and_then(serde_json::Value::as_str)
+            {
+                let mut loader = ("vanilla".to_string(), None);
+                if let Some(mod_loaders) = metadata
+                    .get("minecraft")
+                    .and_then(|minecraft| minecraft.get("modLoaders"))
+                    .and_then(serde_json::Value::as_array)
+                {
+                    if let Some(id) = mod_loaders
+                        .first()
+                        .and_then(|entry| entry.get("id"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        loader = loader_from_identifier(id);
+                    }
+                }
+                return Ok((game_version.to_string(), loader.0, loader.1));
+            }
+        }
+    }
+
+    let versions_dir = game_dir.join("versions");
+    if versions_dir.is_dir() {
+        let mut candidates = Vec::new();
+        for entry in fs::read_dir(&versions_dir)
+            .map_err(|error| format!("Could not inspect {}: {error}", versions_dir.display()))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if !entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                continue;
+            }
+            let identifier = entry.file_name().to_string_lossy().into_owned();
+            let metadata_path = entry.path().join(format!("{identifier}.json"));
+            if !metadata_path.is_file() {
+                continue;
+            }
+            let bytes = fs::read(&metadata_path)
+                .map_err(|error| format!("Could not read {}: {error}", metadata_path.display()))?;
+            let metadata: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("Invalid Minecraft version metadata: {error}"))?;
+            let game_version = metadata
+                .get("inheritsFrom")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .or_else(|| version_from_identifier(&identifier));
+            if let Some(game_version) = game_version {
+                let (mut loader, mut loader_version) = loader_from_identifier(&identifier);
+                if loader == "vanilla" {
+                    if let Some(libraries) = metadata
+                        .get("libraries")
+                        .and_then(serde_json::Value::as_array)
+                    {
+                        for library in libraries {
+                            let name = library
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default();
+                            if name.starts_with("net.fabricmc:fabric-loader:") {
+                                loader = "fabric".to_string();
+                                loader_version = name.split(':').nth(2).map(str::to_string);
+                            } else if name.starts_with("org.quiltmc:quilt-loader:") {
+                                loader = "quilt".to_string();
+                                loader_version = name.split(':').nth(2).map(str::to_string);
+                            } else if name.starts_with("net.neoforged:neoforge:") {
+                                loader = "neoforge".to_string();
+                                loader_version = name.split(':').nth(2).map(str::to_string);
+                            } else if name.starts_with("net.minecraftforge:forge:") {
+                                loader = "forge".to_string();
+                                loader_version = name
+                                    .split(':')
+                                    .nth(2)
+                                    .and_then(|version| version.split('-').next_back())
+                                    .map(str::to_string);
+                            }
+                        }
+                    }
+                }
+                candidates.push((game_version, loader, loader_version));
+            }
+        }
+        if let Some(candidate) = candidates.into_iter().max_by(|left, right| {
+            let version_key = |value: &str| {
+                value
+                    .split('.')
+                    .map(|part| part.parse::<u32>().unwrap_or_default())
+                    .collect::<Vec<_>>()
+            };
+            version_key(&left.0).cmp(&version_key(&right.0))
+        }) {
+            return Ok(candidate);
+        }
+    }
+
+    for profile_file in [
+        "launcher_profiles.json",
+        "sklauncher_profiles.json",
+        "profiles.json",
+        "profile.json",
+    ] {
+        let profiles_path = game_dir.join(profile_file);
+        if !profiles_path.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&profiles_path)
+            .map_err(|error| format!("Could not read {}: {error}", profiles_path.display()))?;
+        let profiles: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Invalid launcher profile metadata: {error}"))?;
+        let profile_list: Vec<&serde_json::Value> = profiles
+            .get("profiles")
+            .and_then(serde_json::Value::as_object)
+            .map(|profiles| profiles.values().collect())
+            .or_else(|| {
+                profiles
+                    .get("profiles")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|profiles| profiles.iter().collect())
+            })
+            .unwrap_or_else(|| vec![&profiles]);
+        for profile in profile_list {
+            let identifier = [
+                "lastVersionId",
+                "last_version_id",
+                "versionId",
+                "version_id",
+                "gameVersion",
+                "game_version",
+                "version",
+                "id",
+            ]
+            .iter()
+            .find_map(|key| profile.get(key).and_then(serde_json::Value::as_str));
+            if let Some(identifier) = identifier {
+                if let Some(game_version) = version_from_identifier(identifier) {
+                    let (mut loader, mut loader_version) = loader_from_identifier(identifier);
+                    if loader == "vanilla" {
+                        if let Some(profile_loader) = profile
+                            .get("loader")
+                            .or_else(|| profile.get("modLoader"))
+                            .and_then(serde_json::Value::as_str)
+                        {
+                            let normalized = profile_loader.to_ascii_lowercase();
+                            if let Some(detected_loader) = ["fabric", "forge", "neoforge", "quilt"]
+                                .iter()
+                                .find(|candidate| normalized.contains(**candidate))
+                            {
+                                loader = (*detected_loader).to_string();
+                                loader_version = profile
+                                    .get("loaderVersion")
+                                    .or_else(|| profile.get("loader_version"))
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_string);
+                            }
+                        }
+                    }
+                    return Ok((game_version, loader, loader_version));
+                }
+            }
+        }
+    }
+
+    Err("Could not detect a Minecraft version in this folder. Select the profile's game directory (SKLauncher 4: open the profile's Game Directory) or an instance folder containing Minecraft version metadata.".to_string())
+}
+
+fn is_import_game_directory(path: &Path) -> bool {
+    [
+        "versions",
+        "mods",
+        "saves",
+        "config",
+        "launcher_profiles.json",
+        "sklauncher_profiles.json",
+        "profiles.json",
+        "profile.json",
+        "mmc-pack.json",
+        "manifest.json",
+    ]
+    .iter()
+    .any(|entry| path.join(entry).exists())
+}
+
+fn has_importable_game_data(path: &Path) -> bool {
+    [
+        "versions",
+        "mods",
+        "saves",
+        "config",
+        "resourcepacks",
+        "shaderpacks",
+        "options.txt",
+        "servers.dat",
+    ]
+    .iter()
+    .any(|entry| path.join(entry).exists())
+}
+
+fn resolve_import_directories(selected_path: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let game_dir = if has_importable_game_data(selected_path) {
+        selected_path.to_path_buf()
+    } else {
+        ["minecraft", ".minecraft"]
+        .iter()
+        .map(|child| selected_path.join(child))
+        .find(|candidate| candidate.is_dir() && has_importable_game_data(candidate))
+        .or_else(|| is_import_game_directory(selected_path).then(|| selected_path.to_path_buf()))
+        .ok_or_else(|| "The selected folder does not look like a Minecraft game directory. Choose the SKLauncher profile's Game Directory or its .minecraft folder.".to_string())?
+    };
+    let metadata_dir = if game_dir != selected_path && is_import_game_directory(selected_path) {
+        selected_path.to_path_buf()
+    } else {
+        game_dir.clone()
+    };
+    Ok((game_dir, metadata_dir))
+}
+
+fn copy_imported_game_data(source: &Path, target: &Path) -> Result<(), String> {
+    const DIRECTORIES: &[&str] = &[
+        "mods",
+        "config",
+        "saves",
+        "resourcepacks",
+        "shaderpacks",
+        "screenshots",
+        "defaultconfigs",
+        "schematics",
+        "journeymap",
+        "XaeroWaypoints",
+        "XaeroWorldMap",
+        "server-resource-packs",
+    ];
+    const FILES: &[&str] = &["options.txt", "optionsof.txt", "servers.dat"];
+
+    fs::create_dir_all(target)
+        .map_err(|error| format!("Could not create imported game directory: {error}"))?;
+    for directory in DIRECTORIES {
+        let source_path = source.join(directory);
+        if source_path.is_dir() {
+            copy_instance_directory(&source_path, &target.join(directory))
+                .map_err(|error| format!("Could not import {directory}: {error}"))?;
+        }
+    }
+    for file in FILES {
+        let source_path = source.join(file);
+        if source_path.is_file() {
+            fs::copy(&source_path, target.join(file))
+                .map_err(|error| format!("Could not import {file}: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn import_minecraft_instance(source_path: String) -> Result<ImportedInstanceInfo, String> {
+    let selected_path = PathBuf::from(source_path);
+    let selected_path = selected_path
+        .canonicalize()
+        .map_err(|error| format!("Could not access the selected game folder: {error}"))?;
+    if !selected_path.is_dir() {
+        return Err("Select a folder containing a Minecraft instance.".to_string());
+    }
+    let (game_dir, metadata_dir) = resolve_import_directories(&selected_path)?;
+    let (game_version, loader, loader_version) = detect_import_metadata(&metadata_dir)?;
+    validate_instance_id(&game_version)?;
+    if !matches!(
+        loader.as_str(),
+        "vanilla" | "fabric" | "quilt" | "forge" | "neoforge"
+    ) {
+        return Err(format!("Unsupported imported mod loader: {loader}"));
+    }
+
+    let id = format!("import_{}", Uuid::new_v4().simple());
+    let name = game_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("Imported Minecraft")
+        .to_string();
+    let instances_dir = get_app_data_dir()?.join("instances");
+    let instance_dir = instances_dir.join(&id);
+    let custom_game_dir = instance_dir.clone();
+    fs::create_dir_all(&instances_dir)
+        .map_err(|error| format!("Could not create the instances directory: {error}"))?;
+    fs::create_dir(&instance_dir)
+        .map_err(|error| format!("Could not create imported instance: {error}"))?;
+    let import_result = (|| {
+        copy_imported_game_data(&game_dir, &instance_dir)?;
+        for directory in ["mods", "resourcepacks", "shaderpacks", "saves"] {
+            fs::create_dir_all(instance_dir.join(directory)).map_err(|error| {
+                format!("Could not create instance {directory} folder: {error}")
+            })?;
+        }
+        let metadata = InstanceMetadata {
+            id: id.clone(),
+            name: name.clone(),
+            game_version: game_version.clone(),
+            loader: loader.clone(),
+        };
+        fs::write(
+            instance_dir.join("instance.json"),
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("Could not save imported instance metadata: {error}"))?;
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = import_result {
+        return match fs::remove_dir_all(&instance_dir) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!(
+                "{error} Also failed to remove the incomplete imported instance: {cleanup_error}"
+            )),
+        };
+    }
+    let mods = match list_instance_mods(id.clone()) {
+        Ok(mods) => mods,
+        Err(error) => {
+            return match fs::remove_dir_all(&instance_dir) {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(format!(
+                    "{error} Also failed to remove the incomplete imported instance: {cleanup_error}"
+                )),
+            };
+        }
+    };
+
+    Ok(ImportedInstanceInfo {
+        id,
+        name,
+        game_version,
+        loader,
+        loader_version,
+        custom_game_dir: custom_game_dir.to_string_lossy().into_owned(),
+        mods,
+    })
+}
+
 /// Creates a new instance directory structure
 #[tauri::command]
 fn create_instance(
@@ -1271,6 +1742,16 @@ fn copy_instance_directory(source: &Path, target: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn restore_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        log::error!("Could not restore the launcher: the main window was not found.");
+        return;
+    };
+    if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+        log::error!("Could not restore the launcher window: {error}");
+    }
 }
 
 /// Clones an instance directory
@@ -1426,13 +1907,143 @@ mod path_validation_tests {
     }
 }
 
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    fn test_directory(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("the-boys-{label}-{}", Uuid::new_v4().simple()))
+    }
+
+    #[test]
+    fn detects_mmc_pack_versions_and_mod_loaders() {
+        let directory = test_directory("import-metadata");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("mmc-pack.json"),
+            r#"{"components":[{"uid":"net.minecraft","version":"1.21.1"},{"uid":"net.fabricmc.fabric-loader","version":"0.16.10"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_import_metadata(&directory).unwrap(),
+            (
+                "1.21.1".to_string(),
+                "fabric".to_string(),
+                Some("0.16.10".to_string())
+            )
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn detects_sklauncher_profile_metadata() {
+        let directory = test_directory("sklauncher-profile");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("sklauncher_profiles.json"),
+            r#"{"profiles":[{"version":"1.20.1-forge-47.4.0"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_import_metadata(&directory).unwrap(),
+            (
+                "1.20.1".to_string(),
+                "forge".to_string(),
+                Some("47.4.0".to_string())
+            )
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_multimc_instance_metadata_and_game_data_separately() {
+        let directory = test_directory("multimc-import");
+        let game_directory = directory.join(".minecraft");
+        fs::create_dir_all(game_directory.join("saves")).unwrap();
+        fs::write(
+            directory.join("mmc-pack.json"),
+            r#"{"components":[{"uid":"net.minecraft","version":"1.21.1"}]}"#,
+        )
+        .unwrap();
+
+        let (game_dir, metadata_dir) = resolve_import_directories(&directory).unwrap();
+        assert_eq!(game_dir, game_directory);
+        assert_eq!(metadata_dir, directory);
+        assert_eq!(
+            detect_import_metadata(&metadata_dir).unwrap(),
+            ("1.21.1".to_string(), "vanilla".to_string(), None)
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn copies_instance_data_without_touching_launcher_runtime_files() {
+        let source = test_directory("import-source");
+        let target = test_directory("import-target");
+        fs::create_dir_all(source.join("mods")).unwrap();
+        fs::create_dir_all(source.join("saves").join("World")).unwrap();
+        fs::create_dir_all(source.join("versions")).unwrap();
+        fs::write(source.join("mods").join("example.jar"), b"mod").unwrap();
+        fs::write(source.join("options.txt"), b"options").unwrap();
+        fs::write(source.join("versions").join("runtime.jar"), b"runtime").unwrap();
+
+        copy_imported_game_data(&source, &target).unwrap();
+
+        assert_eq!(
+            fs::read(target.join("mods").join("example.jar")).unwrap(),
+            b"mod"
+        );
+        assert_eq!(fs::read(target.join("options.txt")).unwrap(), b"options");
+        assert!(!target.join("versions").exists());
+        assert!(source.join("mods").join("example.jar").is_file());
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let show = MenuItem::with_id(app, "show", "Show The Boys", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let tray = TrayIconBuilder::new()
+                .tooltip("The Boys Minecraft Launcher")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => restore_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        restore_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+            if let Some(icon) = app.default_window_icon() {
+                tray.set_icon(Some(icon.clone()))?;
+            }
+            app.manage(tray);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_system_hardware,
             install_minecraft_instance,
+            import_minecraft_instance,
             launch_game,
             stop_game,
             is_game_running,

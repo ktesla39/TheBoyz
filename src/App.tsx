@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { HomeView } from './components/home/HomeView';
@@ -50,12 +52,14 @@ import {
   invokeSaveMicrosoftCredentials,
   invokeClearMicrosoftCredentials,
   invokeGetSystemHardware,
+  invokeImportMinecraftInstance,
   invokeIsGameRunning,
   invokeLaunchGame,
   invokeStopGame,
   isTauriEnvironment,
   TauriHardwareInfo,
   TauriJavaInstallation,
+  LauncherProgress,
 } from './services/tauriBridge';
 import { applyLauncherTheme } from './services/themeService';
 import { SkinManagerModal } from './components/accounts/SkinManagerModal';
@@ -118,6 +122,13 @@ export default function App() {
   const [hardwareInfo, setHardwareInfo] = useState<TauriHardwareInfo | null>(null);
   const [javaInstallations, setJavaInstallations] = useState<TauriJavaInstallation[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [launchElapsedMs, setLaunchElapsedMs] = useState(0);
+  const launchStartTimeRef = useRef<number | null>(null);
+  const progressConsoleEntryIdRef = useRef<string | null>(null);
+  const progressPendingRef = useRef<LauncherProgress | null>(null);
+  const progressRenderTimerRef = useRef<number | null>(null);
+  const lastProgressRenderAtRef = useRef(0);
+  const lastProgressConsoleAtRef = useRef(0);
 
   const refreshRuntimeInfo = useCallback(async () => {
     if (!isTauriEnvironment()) return;
@@ -149,8 +160,86 @@ export default function App() {
     void refreshRuntimeInfo();
   }, [refreshRuntimeInfo]);
 
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<LauncherProgress>('launcher-progress', (event) => {
+      const progress = event.payload;
+      progressPendingRef.current = progress;
+      const nowMs = performance.now();
+      const isFrequentFileEvent = ['downloading', 'verifying', 'downloaded'].includes(progress.phase);
+      if (!isFrequentFileEvent) {
+        if (progressRenderTimerRef.current !== null) {
+          window.clearTimeout(progressRenderTimerRef.current);
+          progressRenderTimerRef.current = null;
+        }
+        setLaunchProgress(progress);
+        lastProgressRenderAtRef.current = nowMs;
+      } else if (progressRenderTimerRef.current === null) {
+        const delay = Math.max(0, 110 - (nowMs - lastProgressRenderAtRef.current));
+        progressRenderTimerRef.current = window.setTimeout(() => {
+          progressRenderTimerRef.current = null;
+          const latest = progressPendingRef.current;
+          if (latest) {
+            setLaunchProgress(latest);
+            lastProgressRenderAtRef.current = performance.now();
+          }
+        }, delay);
+      }
+
+      const shouldLogProgress = !isFrequentFileEvent || nowMs - lastProgressConsoleAtRef.current >= 1500;
+      if (!shouldLogProgress) return;
+      lastProgressConsoleAtRef.current = nowMs;
+      const file = progress.file;
+
+      const now = new Date();
+      const progressLogId = progressConsoleEntryIdRef.current ?? `launch_progress_${Date.now()}`;
+      progressConsoleEntryIdRef.current = progressLogId;
+      const fileSummary = file ? ` (${file})` : '';
+      const percentSummary = progress.phase === 'downloading'
+        ? ` · ${progress.percent === null ? 'downloading' : `${Math.min(100, Math.floor(progress.percent / 25) * 25)}%` }`
+        : '';
+      const progressLog: LogEntry = {
+        id: progressLogId,
+        timestamp: `${now.toTimeString().split(' ')[0]}.${String(now.getMilliseconds()).padStart(3, '0')}`,
+        level: 'INFO',
+        source: 'LAUNCHER',
+        message: `${progress.message}${fileSummary}${percentSummary}`,
+      };
+      setLogs((current) => current.some((entry) => entry.id === progressLogId)
+        ? current.map((entry) => entry.id === progressLogId ? progressLog : entry)
+        : [...current, progressLog]);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((reason: unknown) => {
+      console.error('Could not subscribe to Minecraft install progress.', reason);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+      if (progressRenderTimerRef.current !== null) {
+        window.clearTimeout(progressRenderTimerRef.current);
+        progressRenderTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Centralized Download Tasks
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
+  const [launchProgress, setLaunchProgress] = useState<LauncherProgress | null>(null);
+
+  useEffect(() => {
+    if (!isLaunching) return;
+    const timer = window.setInterval(() => {
+      const startedAt = launchStartTimeRef.current;
+      if (startedAt !== null) {
+        setLaunchElapsedMs(Math.max(0, Math.round(performance.now() - startedAt)));
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [isLaunching]);
 
   // Sync state changes to local storage
   useEffect(() => {
@@ -267,28 +356,53 @@ export default function App() {
       appendLog('ERROR', 'Game launch is available only in the installed desktop launcher.');
       return;
     }
+    setIsLaunching(true);
+    launchStartTimeRef.current = performance.now();
+    setLaunchElapsedMs(0);
+    const finishLaunchTiming = () => {
+      const startedAt = launchStartTimeRef.current;
+      if (startedAt === null) return null;
+      const elapsed = Math.max(0, Math.round(performance.now() - startedAt));
+      launchStartTimeRef.current = null;
+      setLaunchElapsedMs(elapsed);
+      return elapsed;
+    };
+    progressConsoleEntryIdRef.current = null;
+    lastProgressRenderAtRef.current = 0;
+    lastProgressConsoleAtRef.current = 0;
+    setLaunchProgress({ phase: 'checking', message: 'Selecting a compatible Java runtime', file: null, downloadedBytes: 0, totalBytes: null, percent: null });
     let instanceToLaunch = launchInstance;
-    if (!instanceToLaunch.javaConfig.path.trim()) {
-      try {
-        const detected = javaInstallations.length > 0 ? javaInstallations : await invokeDetectJava();
-        if (javaInstallations.length === 0) setJavaInstallations(detected);
-        const requiredJava = getRecommendedJavaVersion(instanceToLaunch.gameVersion);
-        const compatible = requiredJava === null
+    try {
+      const detected = javaInstallations.length > 0 ? javaInstallations : await invokeDetectJava();
+      if (javaInstallations.length === 0) setJavaInstallations(detected);
+      const requiredJava = getRecommendedJavaVersion(instanceToLaunch.gameVersion);
+      const currentPath = instanceToLaunch.javaConfig.path.trim().toLowerCase();
+      const configured = detected.find((java) => java.path.trim().toLowerCase() === currentPath);
+      const configuredMajor = configured?.major_version ?? instanceToLaunch.javaConfig.version;
+      const configuredIsCompatible = Boolean(currentPath) && (requiredJava === null || configuredMajor >= requiredJava);
+      if (!configuredIsCompatible) {
+        const recommended = requiredJava === null
           ? detected[0]
           : detected.find((java) => java.major_version === requiredJava)
             ?? detected.filter((java) => java.major_version > requiredJava).sort((a, b) => a.major_version - b.major_version)[0];
-        if (!compatible) {
+        if (!recommended) {
           const requirement = requiredJava === null ? 'a compatible Java runtime' : `Java ${requiredJava} or newer`;
-          appendLog('ERROR', `No compatible Java runtime was found. Install ${requirement} and try again. Your instance files were not changed.`);
+          appendLog('ERROR', `No compatible Java runtime was detected. Install ${requirement} or add it to JAVA_HOME, then refresh Java detection. No game files were changed.`);
+          setIsLaunching(false);
+          setLaunchProgress(null);
+          finishLaunchTiming();
           return;
         }
-        instanceToLaunch = { ...instanceToLaunch, javaConfig: { ...instanceToLaunch.javaConfig, path: compatible.path, version: compatible.major_version } };
+        instanceToLaunch = { ...instanceToLaunch, javaConfig: { ...instanceToLaunch.javaConfig, path: recommended.path, version: recommended.major_version } };
         setInstances((current) => current.map((item) => item.id === instanceToLaunch.id ? instanceToLaunch : item));
-        appendLog('INFO', `Using Java ${compatible.major_version} automatically for this Minecraft instance.`);
-      } catch (reason) {
-        appendLog('ERROR', `Could not detect Java. Install a compatible runtime and try again. ${reason instanceof Error ? reason.message : String(reason)}`);
-        return;
+        appendLog('INFO', `Selected Java ${recommended.major_version}, recommended for Minecraft ${instanceToLaunch.gameVersion}.`);
       }
+    } catch (reason) {
+      appendLog('ERROR', `Could not detect Java. Install a compatible runtime or add it to JAVA_HOME, then refresh Java detection. ${reason instanceof Error ? reason.message : String(reason)}`);
+      setIsLaunching(false);
+      setLaunchProgress(null);
+      finishLaunchTiming();
+      return;
     }
     let launchAccount = activeAccount;
     if (launchAccount.type === 'microsoft') {
@@ -315,6 +429,9 @@ export default function App() {
         setAccounts((current) => current.map((item) => item.id === launchAccount.id ? launchAccount : item));
       } catch (reason) {
         appendLog('ERROR', reason instanceof Error ? reason.message : String(reason));
+        setIsLaunching(false);
+        setLaunchProgress(null);
+        finishLaunchTiming();
         return;
       }
     }
@@ -329,7 +446,7 @@ export default function App() {
         : `Installing/verifying ${launchInstance.name} (Minecraft ${launchInstance.gameVersion}).`,
     };
     setLogs((prev) => [...prev, launchLog]);
-    setIsLaunching(true);
+    setLaunchProgress({ phase: 'checking', message: 'Checking Minecraft files', file: null, downloadedBytes: 0, totalBytes: null, percent: null });
     try {
       appendLog('INFO', 'Verifying or installing Minecraft files before launch.');
       const result = await invokeLaunchGame(
@@ -341,13 +458,37 @@ export default function App() {
       if (!result.success || result.pid === null) {
         throw new Error(result.message || 'The launcher did not return a game process ID.');
       }
+      const launchDuration = finishLaunchTiming();
       setGamePid(result.pid);
       setIsGameRunning(true);
-      appendLog('INFO', `${result.message} Java process ID: ${result.pid}.`);
+      setInstances((current) => current.map((item) => item.id === instanceToLaunch.id
+        ? { ...item, lastPlayed: Date.now(), lastLaunchDurationMs: launchDuration ?? undefined }
+        : item));
+      appendLog(
+        'INFO',
+        `${result.message} Java process ID: ${result.pid}. Minecraft's Java process started in ${((launchDuration ?? 0) / 1000).toFixed(1)} seconds; the game may still be loading.`
+      );
+      try {
+        const launcherWindow = getCurrentWindow();
+        if (settings.afterLaunchAction === 'minimize') {
+          await launcherWindow.minimize();
+        } else if (settings.afterLaunchAction === 'hide_to_tray') {
+          await launcherWindow.hide();
+        } else if (settings.afterLaunchAction === 'close') {
+          await launcherWindow.close();
+        }
+      } catch (reason) {
+        appendLog(
+          'ERROR',
+          `Minecraft started, but the selected after-launch action failed: ${reason instanceof Error ? reason.message : String(reason)}`
+        );
+      }
     } catch (reason) {
       appendLog('ERROR', reason instanceof Error ? reason.message : String(reason));
     } finally {
+      finishLaunchTiming();
       setIsLaunching(false);
+      setLaunchProgress(null);
     }
   };
 
@@ -417,6 +558,46 @@ export default function App() {
   const handleAddInstance = (newInst: MinecraftInstance) => {
     setInstances((prev) => [newInst, ...prev]);
     setActiveInstanceId(newInst.id);
+  };
+
+  const handleImportInstance = async (sourcePath: string) => {
+    const imported = await invokeImportMinecraftInstance(sourcePath);
+    const requiredJava = getRecommendedJavaVersion(imported.game_version);
+    const instance: MinecraftInstance = {
+      id: imported.id,
+      name: imported.name,
+      icon: 'grass_block',
+      gameVersion: imported.game_version,
+      loader: imported.loader,
+      loaderVersion: imported.loader_version ?? undefined,
+      graphicsApi: 'auto',
+      javaConfig: {
+        path: '',
+        version: requiredJava ?? 17,
+        minMemoryMb: 2048,
+        maxMemoryMb: 4096,
+        jvmArguments: [],
+        garbageCollector: 'G1GC',
+      },
+      resolution: { width: 1920, height: 1080, fullscreen: false },
+      mods: imported.mods.map((mod) => ({
+        id: mod.file_name,
+        name: mod.name,
+        filename: mod.file_name,
+        version: 'Imported',
+        enabled: mod.enabled,
+        sizeBytes: mod.size_bytes,
+        source: 'local',
+      })),
+      packs: [],
+      worlds: [],
+      screenshots: [],
+      backups: [],
+      createdAt: Date.now(),
+      totalPlayTimeMinutes: 0,
+      customGameDir: imported.custom_game_dir,
+    };
+    handleAddInstance(instance);
   };
 
   const handleDeleteInstance = (id: string) => {
@@ -567,7 +748,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[var(--mc-bg)] text-slate-100">
+    <div className="launcher-shell flex h-screen w-screen overflow-hidden bg-[var(--mc-bg)] text-slate-100">
       {/* Left Navigation Sidebar */}
       <Sidebar
         currentTab={currentTab}
@@ -593,6 +774,8 @@ export default function App() {
           isGameRunning={isGameRunning}
           isLaunching={isLaunching}
           desktopAvailable={isTauriEnvironment()}
+          launchProgress={launchProgress}
+          launchElapsedMs={launchElapsedMs}
           onLaunchGame={(instanceId) => handleLaunchGame(undefined, instanceId)}
           onStopGame={handleStopGame}
           onSelectInstance={setActiveInstanceId}
@@ -607,7 +790,7 @@ export default function App() {
         />
 
         {/* Viewport Content */}
-        <main className="flex-1 overflow-y-auto bg-[var(--mc-bg)]">
+        <main className="launcher-content flex-1 overflow-y-auto">
           {currentTab === 'home' && (
             <HomeView
               activeInstance={activeInstance}
@@ -656,6 +839,7 @@ export default function App() {
                 setActiveInstanceId(id);
                 void handleLaunchGame(undefined, id);
               }}
+              onImportInstance={handleImportInstance}
               onManageMods={(inst) => {
                 setActiveInstanceId(inst.id);
                 setCurrentTab('addons');
@@ -761,6 +945,9 @@ export default function App() {
         onClose={() => setIsConsoleOpen(false)}
         logs={logs}
         isGameRunning={isGameRunning}
+        isLaunching={isLaunching}
+        launchProgress={launchProgress}
+        launchElapsedMs={launchElapsedMs}
         onStopGame={handleStopGame}
         onClearLogs={() => setLogs([])}
       />

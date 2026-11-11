@@ -8,7 +8,10 @@ import {
   Search,
   Check,
   Monitor,
+  FolderInput,
+  LoaderCircle,
 } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { MinecraftInstance, ModLoaderType } from '../../types/instance';
 import { CreateInstanceModal } from './CreateInstanceModal';
 import { DesktopShortcutModal } from '../common/DesktopShortcutModal';
@@ -28,6 +31,7 @@ interface InstancesViewProps {
   onDeleteInstance: (id: string) => void;
   onCloneInstance: (id: string) => void;
   onLaunchInstance: (id: string) => void;
+  onImportInstance: (sourcePath: string) => Promise<void>;
   onManageMods: (instance: MinecraftInstance) => void;
   onOpenDetail: (instance: MinecraftInstance) => void;
 }
@@ -40,6 +44,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
   onDeleteInstance,
   onCloneInstance,
   onLaunchInstance,
+  onImportInstance,
   onManageMods,
   onOpenDetail,
 }) => {
@@ -47,6 +52,26 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
   const [filterLoader, setFilterLoader] = useState<ModLoaderType | 'all'>('all');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [shortcutInstance, setShortcutInstance] = useState<MinecraftInstance | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImportInstance = async () => {
+    setImportError(null);
+    try {
+      const selectedPath = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select a Minecraft instance or game directory',
+      });
+      if (!selectedPath || Array.isArray(selectedPath)) return;
+      setIsImporting(true);
+      await onImportInstance(selectedPath);
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const filteredInstances = instances.filter((inst) => {
     const matchesSearch =
@@ -70,14 +95,35 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setIsCreateOpen(true)}
-          className="btn-mc btn-mc-green flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Instance</span>
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void handleImportInstance()}
+            disabled={isImporting}
+            className="btn-mc flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display disabled:opacity-50"
+            title="Copy mods, saves, configurations, and game options from SKLauncher or another launcher"
+          >
+            {isImporting ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
+            <span>{isImporting ? 'Importing…' : 'Import Instance'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="btn-mc btn-mc-green flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Instance</span>
+          </button>
+        </div>
       </div>
+      {importError && (
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          {importError}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-400 font-mono">
+        Imports copy your saves, mods, configs, resource packs, shaders, and server settings. The source folder is never changed. For SKLauncher 4, select the profile&apos;s Game Directory.
+      </p>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -122,17 +168,14 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
             <div
               key={inst.id}
               onClick={() => onSelectActiveInstance(inst.id)}
-              className={`card-obsidian min-w-0 overflow-hidden p-5 rounded-xl border flex flex-col justify-between gap-4 transition-all cursor-pointer ${
-                isActive
-                  ? 'border-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.15)] ring-1 ring-emerald-500/40'
-                  : ''
-              }`}
+              data-tone={inst.loader === 'fabric' ? 'ice' : inst.loader === 'quilt' ? 'violet' : inst.loader === 'forge' || inst.loader === 'neoforge' ? 'amber' : 'green'}
+              className={`card-obsidian card-selectable min-w-0 overflow-hidden p-5 rounded-xl flex flex-col justify-between gap-4 transition-all cursor-pointer ${isActive ? 'card-selected' : ''}`}
             >
               {/* Top Details */}
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-3 min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="w-10 h-10 rounded-lg bg-black/40 border border-white/10 flex items-center justify-center shrink-0 text-[var(--mc-accent)]">
+                    <div className="card-icon-tile w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
                       <GrassBlockIcon className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -166,7 +209,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 py-2.5 px-3 rounded-lg bg-black/30 border border-white/5 text-[10px] font-mono text-slate-400 min-w-0">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 py-2.5 px-3 rounded-lg card-inset text-[10px] font-mono text-slate-400 min-w-0">
                   <div className="truncate">
                     <div className="uppercase text-slate-400 text-[9px]">RAM Limit</div>
                     <div className="text-slate-200 font-bold mt-0.5 truncate">{inst.javaConfig.maxMemoryMb} MB</div>
@@ -178,6 +221,17 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                   <div className="truncate">
                     <div className="uppercase text-slate-400 text-[9px]">Active Mods</div>
                     <div className="text-slate-200 font-bold mt-0.5 truncate">{activeModsCount} enabled</div>
+                  </div>
+                  <div className="truncate">
+                    <div className="uppercase text-slate-400 text-[9px]">Time to Start</div>
+                    <div
+                      className="text-slate-200 font-bold mt-0.5 truncate"
+                      title="Measured until the Minecraft Java process starts; world loading continues afterward."
+                    >
+                      {inst.lastLaunchDurationMs === undefined
+                        ? 'Not launched'
+                        : `${(inst.lastLaunchDurationMs / 1000).toFixed(1)} sec`}
+                    </div>
                   </div>
                 </div>
               </div>

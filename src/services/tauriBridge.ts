@@ -33,12 +33,42 @@ export interface TauriJavaInstallation {
   is_64_bit: boolean | null;
 }
 
+export interface LauncherProgress {
+  phase: string;
+  message: string;
+  file: string | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
 export interface TauriLaunchResult {
   success: boolean;
   pid: number | null;
   executable: string;
   args: string[];
   message: string;
+}
+
+export interface TauriImportedInstance {
+  id: string;
+  name: string;
+  game_version: string;
+  loader: MinecraftInstance['loader'];
+  loader_version: string | null;
+  custom_game_dir: string;
+  mods: Array<{
+    file_name: string;
+    name: string;
+    enabled: boolean;
+    size_bytes: number;
+  }>;
+}
+
+export async function invokeImportMinecraftInstance(sourcePath: string): Promise<TauriImportedInstance> {
+  return invokeTauri<TauriImportedInstance>('import_minecraft_instance', {
+    sourcePath,
+  });
 }
 
 export async function invokeLaunchGame(

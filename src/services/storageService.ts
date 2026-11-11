@@ -26,7 +26,7 @@ export interface LauncherSettings {
   lowSpecMode: boolean;
   dedicatedGpuOffload: boolean;
   cpuThreadAffinity: 'all' | 'high_priority' | '2_cores' | '4_cores';
-  closeAfterLaunch: boolean;
+  afterLaunchAction: 'keep_open' | 'minimize' | 'hide_to_tray' | 'close';
   maxConcurrentDownloads: number;
   downloadSpeedLimitMb: number;
   discordRpcEnabled: boolean;
@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   lowSpecMode: false,
   dedicatedGpuOffload: true,
   cpuThreadAffinity: 'all',
-  closeAfterLaunch: false,
+  afterLaunchAction: 'keep_open',
   maxConcurrentDownloads: 4,
   downloadSpeedLimitMb: 0,
   discordRpcEnabled: true,
@@ -114,7 +114,14 @@ export function saveActiveAccountId(id: string): void {
 
 export function loadSettings(): LauncherSettings {
   const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-  return raw === null ? DEFAULT_SETTINGS : JSON.parse(raw) as LauncherSettings;
+  if (raw === null) return DEFAULT_SETTINGS;
+  const saved = JSON.parse(raw) as Partial<LauncherSettings> & { closeAfterLaunch?: boolean };
+  return {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    afterLaunchAction:
+      saved.afterLaunchAction ?? (saved.closeAfterLaunch ? 'close' : DEFAULT_SETTINGS.afterLaunchAction),
+  };
 }
 
 export function saveSettings(settings: LauncherSettings): void {

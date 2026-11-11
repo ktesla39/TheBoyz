@@ -2,13 +2,20 @@ import React from 'react';
 import {
   Terminal,
   Palette,
-  ChevronLeft,
-  ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
+  House,
+  LayoutGrid,
+  Puzzle,
+  BookOpen,
+  Globe2,
+  Gauge,
+  Coffee,
+  Download,
+  UsersRound,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
-  TheBoysEmblemIcon,
   GrassBlockIcon,
   CraftingTableIcon,
   DiamondSwordIcon,
@@ -25,9 +32,6 @@ import {
   DragonEggIcon,
   TridentIcon,
   MinecraftShieldIcon,
-  OpenGlApiIcon,
-  RamChipIcon,
-  TauriRustIcon,
   MicrosoftBrandIcon,
   OfflineShieldIcon,
 } from '../icons/MinecraftIcons';
@@ -65,6 +69,7 @@ interface NavItem {
   id: NavTab;
   label: string;
   icon: React.ComponentType<{ className?: string; size?: number }>;
+  tone: string;
   badge?: number;
 }
 
@@ -136,24 +141,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
 
   const mainNavItems: NavItem[] = [
-    { id: 'home', label: 'Launcher Home', icon: GrassBlockIcon },
-    { id: 'instances', label: 'My Instances', icon: DiamondSwordIcon },
-    { id: 'addons', label: 'Addons', icon: CraftingTableIcon },
-    { id: 'versions', label: 'Game Versions', icon: PickaxeIcon },
-    { id: 'servers', label: 'Server Monitor', icon: EnderEyeIcon },
+    { id: 'home', label: 'Home', icon: House, tone: 'text-sky-300' },
+    { id: 'instances', label: 'Instances', icon: LayoutGrid, tone: 'text-violet-300' },
+    { id: 'addons', label: 'Add-ons', icon: Puzzle, tone: 'text-emerald-300' },
+    { id: 'versions', label: 'Versions', icon: BookOpen, tone: 'text-amber-300' },
+    { id: 'servers', label: 'Servers', icon: Globe2, tone: 'text-cyan-300' },
   ];
 
   const systemNavItems: NavItem[] = [
-    { id: 'graphics', label: 'Graphics API', icon: OpenGlApiIcon },
-    { id: 'java', label: 'Java & JVM', icon: RamChipIcon },
+    { id: 'graphics', label: 'Graphics', icon: Gauge, tone: 'text-blue-300' },
+    { id: 'java', label: 'Java & JVM', icon: Coffee, tone: 'text-orange-300' },
     {
       id: 'downloads',
       label: 'Downloads',
-      icon: NetheriteIngotIcon,
+      icon: Download,
+      tone: 'text-teal-300',
       badge: activeDownloadsCount > 0 ? activeDownloadsCount : undefined,
     },
-    { id: 'accounts', label: 'Accounts (Off/On)', icon: MinecraftShieldIcon },
-    { id: 'settings', label: 'Launcher Settings', icon: EnchantedBookIcon },
+    { id: 'accounts', label: 'Accounts', icon: UsersRound, tone: 'text-pink-300' },
+    { id: 'settings', label: 'Settings', icon: SlidersHorizontal, tone: 'text-slate-300' },
   ];
 
   return (
@@ -217,7 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 py-3">
           {!isCollapsed && (
             <div className="px-3 mb-1.5 text-[8px] font-bold text-slate-400 tracking-wider uppercase font-pixel">
-              PLAY & MODS
+              YOUR WORLD
             </div>
           )}
           <nav className="space-y-1">
@@ -234,11 +240,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title={isCollapsed ? item.label : undefined}
                   className={`group relative w-full flex items-center gap-3 text-xs font-semibold rounded cursor-pointer transition-colors ${isCollapsed ? 'justify-center p-2.5' : 'px-3 py-2 text-left'
                     } ${isActive
-                      ? 'btn-mc btn-mc-green text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.04]'
+                      ? 'nav-item-active text-white'
+                      : 'nav-item-idle text-slate-400 hover:text-slate-100 hover:bg-white/[0.04]'
                     }`}
                 >
-                  <div className={`shrink-0 transition-opacity duration-150 ${isActive ? 'scale-110' : 'group-hover:scale-110 opacity-80'}`}>
+                  <div className={`shrink-0 transition-transform duration-200 ${item.tone} ${isActive ? 'scale-105' : 'group-hover:scale-105'}`}>
                     <Icon className="w-4 h-4" />
                   </div>
                   {!isCollapsed && <span className="truncate">{item.label}</span>}
@@ -252,7 +258,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 py-1">
           {!isCollapsed && (
             <div className="px-3 mb-1.5 text-[8px] font-bold text-slate-400 tracking-wider uppercase font-pixel">
-              HARDWARE & SYSTEM
+              TOOLS
             </div>
           )}
           <nav className="space-y-1">
@@ -269,12 +275,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title={isCollapsed ? item.label : undefined}
                   className={`group relative w-full flex items-center gap-3 text-xs font-semibold rounded cursor-pointer transition-colors ${isCollapsed ? 'justify-center p-2.5' : 'px-3 py-2 justify-between text-left'
                     } ${isActive
-                      ? 'btn-mc btn-mc-green text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.04]'
+                      ? 'nav-item-active text-white'
+                      : 'nav-item-idle text-slate-400 hover:text-slate-100 hover:bg-white/[0.04]'
                     }`}
                 >
                   <div className="flex items-center gap-3 truncate">
-                    <div className={`shrink-0 transition-opacity duration-150 ${isActive ? 'scale-110' : 'group-hover:scale-110 opacity-80'}`}>
+                    <div className={`shrink-0 transition-transform duration-200 ${item.tone} ${isActive ? 'scale-105' : 'group-hover:scale-105'}`}>
                       <Icon className="w-4 h-4" />
                     </div>
                     {!isCollapsed && <span className="truncate">{item.label}</span>}

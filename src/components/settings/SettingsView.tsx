@@ -273,6 +273,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </button>
       </div>
 
+      <div className="card-obsidian p-5 sm:p-6 rounded-2xl space-y-3">
+        <h3 className="text-sm font-black text-white font-display flex items-center gap-2">
+          <Monitor className="w-4 h-4 text-[var(--mc-accent)] shrink-0" />
+          <span>After Minecraft Starts</span>
+        </h3>
+        <p className="text-xs text-slate-400 font-mono">
+          Choose what the launcher does after the game process starts. You can change this at any time.
+        </p>
+        <select
+          aria-label="Launcher action after Minecraft starts"
+          value={localSettings.afterLaunchAction}
+          onChange={(event) => {
+            const updated = {
+              ...localSettings,
+              afterLaunchAction: event.target.value as LauncherSettings['afterLaunchAction'],
+            };
+            setLocalSettings(updated);
+            applyLiveChanges(updated);
+          }}
+          className="select-mc w-full sm:max-w-md text-xs font-mono py-2 px-3"
+        >
+          <option value="keep_open">Keep the launcher open</option>
+          <option value="minimize">Minimize to the taskbar</option>
+          <option value="hide_to_tray">Hide to the system tray</option>
+          <option value="close">Close the launcher</option>
+        </select>
+        {localSettings.afterLaunchAction === 'hide_to_tray' && (
+          <p className="text-[11px] text-slate-400 font-mono">
+            Use the The Boys tray icon to restore or quit the launcher.
+          </p>
+        )}
+      </div>
+
       {/* 1. Custom Launcher App Icon & Branding */}
       <div className="card-obsidian p-5 sm:p-6 rounded-2xl space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

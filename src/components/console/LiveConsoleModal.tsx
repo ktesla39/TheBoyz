@@ -12,12 +12,16 @@ import {
 } from 'lucide-react';
 import { LogEntry } from '../../types/launcher';
 import { TheBoysEmblemIcon } from '../icons/MinecraftIcons';
+import type { LauncherProgress } from '../../services/tauriBridge';
 
 interface LiveConsoleModalProps {
   isOpen: boolean;
   onClose: () => void;
   logs: LogEntry[];
   isGameRunning: boolean;
+  isLaunching: boolean;
+  launchProgress: LauncherProgress | null;
+  launchElapsedMs: number;
   onStopGame: () => void;
   onClearLogs: () => void;
 }
@@ -27,6 +31,9 @@ export const LiveConsoleModal: React.FC<LiveConsoleModalProps> = ({
   onClose,
   logs,
   isGameRunning,
+  isLaunching,
+  launchProgress,
+  launchElapsedMs,
   onStopGame,
   onClearLogs,
 }) => {
@@ -129,6 +136,36 @@ export const LiveConsoleModal: React.FC<LiveConsoleModalProps> = ({
             </button>
           </div>
         </div>
+
+        {isLaunching && launchProgress && (
+          <div className="shrink-0 border-b border-emerald-500/15 bg-emerald-500/[0.04] px-5 py-3" role="status" aria-live="polite">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+              <span className="min-w-0 truncate font-bold text-emerald-100">
+                {launchProgress.file ? `${launchProgress.message}: ${launchProgress.file}` : launchProgress.message}
+              </span>
+              <span className="shrink-0 font-mono text-emerald-300">{(launchElapsedMs / 1000).toFixed(1)}s</span>
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-full bg-black/50 ring-1 ring-white/10"
+              role="progressbar"
+              aria-label={launchProgress.percent === null ? 'Minecraft launch progress' : 'Current file download progress'}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={launchProgress.percent ?? undefined}
+            >
+              <div
+                className={`h-full rounded-full bg-emerald-400 transition-[width] duration-150 ${launchProgress.percent === null ? 'w-1/3 animate-pulse' : ''}`}
+                style={launchProgress.percent === null ? undefined : { width: `${Math.min(100, Math.max(0, launchProgress.percent))}%` }}
+              />
+            </div>
+            {launchProgress.downloadedBytes > 0 && (
+              <p className="mb-0 mt-1.5 text-right font-mono text-[10px] text-slate-400">
+                {(launchProgress.downloadedBytes / (1024 * 1024)).toFixed(1)} MB
+                {launchProgress.totalBytes ? ` / ${(launchProgress.totalBytes / (1024 * 1024)).toFixed(1)} MB` : ' downloaded'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Toolbar: Search & Level Filters */}
         <div className="px-6 py-2.5 bg-[#090c12] border-b border-white/5 flex flex-wrap items-center justify-between gap-3 shrink-0 font-mono">

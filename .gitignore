@@ -10,3 +10,4 @@ coverage/
 .tauri/
 .env*
 !.env.example
+package-lock.json

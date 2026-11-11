@@ -110,6 +110,7 @@ export interface MinecraftInstance {
   backups: InstanceBackup[];
   createdAt: number;
   lastPlayed?: number;
+  lastLaunchDurationMs?: number;
   totalPlayTimeMinutes: number;
   customGameDir?: string;
 }

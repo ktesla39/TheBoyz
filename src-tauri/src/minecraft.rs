@@ -15,6 +15,13 @@ use zip::ZipArchive;
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 
+fn suppress_tokio_console_window(command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 static PROGRESS_APP: OnceLock<AppHandle> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
@@ -83,6 +90,46 @@ fn validate_component(value: &str, label: &str) -> Result<(), String> {
         || value == ".."
     {
         return Err(format!("Invalid {label}."));
+    }
+    Ok(())
+}
+
+fn supports_quick_play(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let patch = parts
+        .next()
+        .and_then(|part| {
+            part.split(|character: char| !character.is_ascii_digit())
+                .next()
+        })
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    major > 1 || (major == 1 && (minor > 20 || (minor == 20 && patch >= 5)))
+}
+
+fn append_quick_play_args(args: &mut Vec<String>, server_address: &str) -> Result<(), String> {
+    let address = server_address.trim();
+    if address.is_empty()
+        || address.len() > 255
+        || address
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err("The server address is invalid.".to_string());
+    }
+
+    if !args
+        .iter()
+        .any(|argument| argument == "--quickPlayMultiplayer")
+    {
+        args.extend(["--quickPlayMultiplayer".to_string(), address.to_string()]);
     }
     Ok(())
 }
@@ -182,11 +229,19 @@ async fn download_file(
         .to_string();
     if destination.is_file() {
         if let Some(expected) = expected_sha1 {
-            emit_launcher_progress("verifying", &format!("Verifying {file_name}"), Some(file_name.clone()), 0, None);
+            emit_launcher_progress(
+                "verifying",
+                &format!("Verifying {file_name}"),
+                Some(file_name.clone()),
+                0,
+                None,
+            );
             let path = destination.to_path_buf();
             let actual = tokio::task::spawn_blocking(move || sha1_file(&path))
                 .await
-                .map_err(|error| format!("Could not verify {}: {error}", destination.display()))??;
+                .map_err(|error| {
+                    format!("Could not verify {}: {error}", destination.display())
+                })??;
             if actual.eq_ignore_ascii_case(expected) {
                 return Ok(());
             }
@@ -206,13 +261,16 @@ async fn download_file(
             Ok(result) => {
                 let status = result.status();
                 last_error = format!("HTTP {status}");
-                if !(status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408) || attempt == 3 {
+                if !(status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408)
+                    || attempt == 3
+                {
                     return Err(format!("Download failed for {url}: {last_error}"));
                 }
             }
             Err(error) => {
                 last_error = error.to_string();
-                if !(error.is_connect() || error.is_timeout() || error.is_request()) || attempt == 3 {
+                if !(error.is_connect() || error.is_timeout() || error.is_request()) || attempt == 3
+                {
                     return Err(format!("Download request failed for {url}: {last_error}. Check your internet connection, firewall, or proxy settings."));
                 }
             }
@@ -225,7 +283,10 @@ async fn download_file(
     let total_bytes = response.content_length();
     let temporary = destination.with_extension(format!(
         "{}.{}.download",
-        destination.extension().and_then(|extension| extension.to_str()).unwrap_or("file"),
+        destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("file"),
         uuid::Uuid::new_v4()
     ));
     let download_result = async {
@@ -449,90 +510,89 @@ async fn install_vanilla(
         .and_then(Value::as_str)
         .ok_or_else(|| "Mojang's client download URL is missing.".to_string())?;
     let client_sha1 = client_download.get("sha1").and_then(Value::as_str);
-    download_file(
-        client,
-        client_url,
-        &versions_dir.join(format!("{game_version}.jar")),
-        client_sha1,
-    )
-    .await?;
+    let client_jar_path = versions_dir.join(format!("{game_version}.jar"));
+    let client_download_future = download_file(client, client_url, &client_jar_path, client_sha1);
 
-    let libraries_dir = root.join("minecraft").join("libraries");
-    let natives_dir = versions_dir.join("natives");
-    if let Some(libraries) = metadata.get("libraries").and_then(Value::as_array) {
-        let mut downloads = Vec::new();
-        let mut scheduled_paths = HashSet::new();
-        for library in libraries.iter().filter(|library| rules_allow(library)) {
-            if let Some((url, path, sha1)) = artifact_info(library) {
-                let path = libraries_dir.join(relative_library_path(&path)?);
-                if scheduled_paths.insert(path.clone()) {
-                    downloads.push((url, path, sha1, false, Vec::new()));
-                }
-            } else if library
-                .get("natives")
-                .and_then(|natives| natives.get(os_name()))
-                .is_none()
-            {
-                if let Some((url, path)) = maven_artifact_info(library)? {
+    let libraries_download_future = async {
+        let libraries_dir = root.join("minecraft").join("libraries");
+        let natives_dir = versions_dir.join("natives");
+        if let Some(libraries) = metadata.get("libraries").and_then(Value::as_array) {
+            let mut downloads = Vec::new();
+            let mut scheduled_paths = HashSet::new();
+            for library in libraries.iter().filter(|library| rules_allow(library)) {
+                if let Some((url, path, sha1)) = artifact_info(library) {
                     let path = libraries_dir.join(relative_library_path(&path)?);
                     if scheduled_paths.insert(path.clone()) {
-                        downloads.push((url, path, None, false, Vec::new()));
+                        downloads.push((url, path, sha1, false, Vec::new()));
                     }
-                }
-            }
-            if let Some(native_classifier) = library
-                .get("natives")
-                .and_then(|natives| natives.get(os_name()))
-                .and_then(Value::as_str)
-            {
-                let classifier = native_classifier.replace("${arch}", native_classifier_arch());
-                if let Some((url, path, sha1)) = library
-                    .get("downloads")
-                    .and_then(|downloads| downloads.get("classifiers"))
-                    .and_then(|classifiers| classifiers.get(&classifier))
-                    .and_then(|artifact| {
-                        Some((
-                            artifact.get("url")?.as_str()?.to_string(),
-                            artifact.get("path")?.as_str()?.to_string(),
-                            artifact
-                                .get("sha1")
-                                .and_then(Value::as_str)
-                                .map(str::to_string),
-                        ))
-                    })
+                } else if library
+                    .get("natives")
+                    .and_then(|natives| natives.get(os_name()))
+                    .is_none()
                 {
-                    let excludes = library
-                        .get("extract")
-                        .and_then(|extract| extract.get("exclude"))
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect();
-                    let path = libraries_dir.join(relative_library_path(&path)?);
-                    if scheduled_paths.insert(path.clone()) {
-                        downloads.push((url, path, sha1, true, excludes));
+                    if let Some((url, path)) = maven_artifact_info(library)? {
+                        let path = libraries_dir.join(relative_library_path(&path)?);
+                        if scheduled_paths.insert(path.clone()) {
+                            downloads.push((url, path, None, false, Vec::new()));
+                        }
+                    }
+                }
+                if let Some(native_classifier) = library
+                    .get("natives")
+                    .and_then(|natives| natives.get(os_name()))
+                    .and_then(Value::as_str)
+                {
+                    let classifier = native_classifier.replace("${arch}", native_classifier_arch());
+                    if let Some((url, path, sha1)) = library
+                        .get("downloads")
+                        .and_then(|downloads| downloads.get("classifiers"))
+                        .and_then(|classifiers| classifiers.get(&classifier))
+                        .and_then(|artifact| {
+                            Some((
+                                artifact.get("url")?.as_str()?.to_string(),
+                                artifact.get("path")?.as_str()?.to_string(),
+                                artifact
+                                    .get("sha1")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
+                            ))
+                        })
+                    {
+                        let excludes = library
+                            .get("extract")
+                            .and_then(|extract| extract.get("exclude"))
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect();
+                        let path = libraries_dir.join(relative_library_path(&path)?);
+                        if scheduled_paths.insert(path.clone()) {
+                            downloads.push((url, path, sha1, true, excludes));
+                        }
                     }
                 }
             }
+            stream::iter(downloads)
+                .map(|(url, path, sha1, is_native, excludes)| async move {
+                    download_file(client, &url, &path, sha1.as_deref()).await?;
+                    Ok::<_, String>((path, is_native, excludes))
+                })
+                .buffer_unordered(12)
+                .try_collect::<Vec<_>>()
+                .await?
+                .into_iter()
+                .try_for_each(|(path, is_native, excludes)| {
+                    if is_native {
+                        extract_natives(&path, &natives_dir, &excludes)?;
+                    }
+                    Ok::<_, String>(())
+                })?;
         }
-        stream::iter(downloads)
-            .map(|(url, path, sha1, is_native, excludes)| async move {
-                download_file(client, &url, &path, sha1.as_deref()).await?;
-                Ok::<_, String>((path, is_native, excludes))
-            })
-            .buffer_unordered(8)
-            .try_collect::<Vec<_>>()
-            .await?
-            .into_iter()
-            .try_for_each(|(path, is_native, excludes)| {
-                if is_native {
-                    extract_natives(&path, &natives_dir, &excludes)?;
-                }
-                Ok::<_, String>(())
-            })?;
-    }
+        Ok::<(), String>(())
+    };
+    tokio::try_join!(client_download_future, libraries_download_future)?;
 
     let assets = metadata
         .get("assetIndex")
@@ -587,7 +647,7 @@ async fn install_vanilla(
         .map(|(url, path, sha1)| async move {
             download_file(client, &url, &path, Some(&sha1)).await
         })
-        .buffer_unordered(16)
+        .buffer_unordered(24)
         .try_collect::<Vec<_>>()
         .await?;
     if let Some(logging_file) = metadata
@@ -740,7 +800,7 @@ async fn install_profile_libraries(
             download_file(client, &url, &path, sha1.as_deref()).await?;
             Ok::<_, String>((path, native, excludes))
         })
-        .buffer_unordered(8)
+        .buffer_unordered(12)
         .try_for_each(|(path, native, excludes)| {
             let natives_dir = natives_dir.clone();
             async move {
@@ -879,12 +939,27 @@ async fn installer_version(
         return recommended_forge_version(client, game_version).await;
     }
     let components = game_version.split('.').collect::<Vec<_>>();
-    if components.first() != Some(&"1") || components.len() < 3 {
+    let Some((minor, patch)) = (|| {
+        if components.first() != Some(&"1") {
+            return None;
+        }
+        let minor = components.get(1)?.parse::<u32>().ok()?;
+        let patch = match components.get(2) {
+            Some(value) => value.parse::<u32>().ok()?,
+            None => 0,
+        };
+        Some((minor, patch))
+    })() else {
+        return Err(format!(
+            "NeoForge does not support Minecraft {game_version}."
+        ));
+    };
+    if minor < 20 || (minor == 20 && patch < 2) {
         return Err(format!(
             "NeoForge does not support Minecraft {game_version}."
         ));
     }
-    let version_prefix = format!("{}.{}.", components[1], components[2]);
+    let version_prefix = format!("{minor}.{patch}.");
     let metadata_url =
         "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
     let text = client
@@ -946,7 +1021,9 @@ async fn install_forge_family(
     ));
     download_file(client, &installer_url, &installer, None).await?;
     let game_dir = root.join("minecraft");
-    let output = tokio::process::Command::new(java)
+    let mut installer_command = tokio::process::Command::new(java);
+    suppress_tokio_console_window(&mut installer_command);
+    let output = installer_command
         .arg("-jar")
         .arg(&installer)
         .arg("--installClient")
@@ -997,6 +1074,17 @@ async fn install_forge_family(
     Ok(merged)
 }
 
+fn profile_matches_loader(id: &str, loader: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    match loader {
+        "neoforge" => id.contains("neoforge"),
+        "forge" => id.contains("forge") && !id.contains("neoforge"),
+        "fabric" => id.contains("fabric"),
+        "quilt" => id.contains("quilt"),
+        _ => false,
+    }
+}
+
 fn find_loader_profile(game_dir: &Path, game_version: &str, loader: &str) -> Result<Value, String> {
     let versions = game_dir.join("versions");
     for entry in fs::read_dir(&versions)
@@ -1019,7 +1107,7 @@ fn find_loader_profile(game_dir: &Path, game_version: &str, loader: &str) -> Res
             .get("inheritsFrom")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if inherits == game_version && id.to_lowercase().contains(loader) {
+        if inherits == game_version && profile_matches_loader(id, loader) {
             return Ok(profile);
         }
     }
@@ -1094,20 +1182,40 @@ pub async fn install_instance(root: &Path, request: InstallRequest) -> Result<St
     .await
     .map_err(|error| format!("Could not inspect the installed Minecraft files: {error}"))??;
     if is_installed {
+        emit_launcher_progress(
+            "ready",
+            "Minecraft files are already installed",
+            None,
+            0,
+            None,
+        );
         return Ok(format!(
             "Minecraft {} ({}) is already installed for instance {}.",
             request.game_version, request.loader, request.instance_id
         ));
     }
-    emit_launcher_progress("checking", "Checking installed Minecraft files", None, 0, None);
+    emit_launcher_progress(
+        "checking",
+        "Checking installed Minecraft files",
+        None,
+        0,
+        None,
+    );
     let client = reqwest::Client::builder()
         .user_agent(concat!("TheBoysLauncher/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(600))
+        .pool_max_idle_per_host(24)
         .pool_idle_timeout(Duration::from_secs(90))
         .build()
         .map_err(|error| format!("Could not configure downloads: {error}"))?;
-    emit_launcher_progress("metadata", "Fetching Minecraft version metadata", None, 0, None);
+    emit_launcher_progress(
+        "metadata",
+        "Fetching Minecraft version metadata",
+        None,
+        0,
+        None,
+    );
     let base = install_vanilla(&client, root, &request.game_version).await?;
     let installed = match request.loader.as_str() {
         "vanilla" => base,
@@ -1184,6 +1292,7 @@ pub async fn install_instance(root: &Path, request: InstallRequest) -> Result<St
     )
     .await
     .map_err(|error| format!("Could not save installation profile: {error}"))?;
+    emit_launcher_progress("ready", "Minecraft files are ready", None, 0, None);
     Ok(format!(
         "Minecraft {} ({}) is installed for instance {}.",
         request.game_version, request.loader, request.instance_id
@@ -1408,6 +1517,15 @@ pub fn prepare_launch(
         &request.instance_id,
         request.custom_game_dir.as_deref(),
     )?;
+    let quick_play_path = game_dir.join("quickPlay");
+    if supports_quick_play(&request.game_version) {
+        fs::create_dir_all(&quick_play_path).map_err(|error| {
+            format!(
+                "Could not create Minecraft Quick Play data directory {}: {error}",
+                quick_play_path.display()
+            )
+        })?;
+    }
     let libraries_dir = root.join("minecraft").join("libraries");
     let assets_dir = root.join("minecraft").join("assets");
     let natives_dir = versions_dir.join(&request.game_version).join("natives");
@@ -1466,6 +1584,18 @@ pub fn prepare_launch(
                 .to_string()
         })
         .unwrap_or_default();
+    let quick_play_path_string = quick_play_path.to_string_lossy().into_owned();
+    let server_address = request
+        .server_address
+        .as_deref()
+        .map(str::trim)
+        .filter(|address| !address.is_empty());
+    if server_address.is_some() && !supports_quick_play(&request.game_version) {
+        return Err(format!(
+            "Direct Connect at launch requires Minecraft 1.20.5 or newer. Minecraft {} does not support Quick Play.",
+            request.game_version
+        ));
+    }
     let resolution_width = request.resolution_width.unwrap_or(1920).to_string();
     let resolution_height = request.resolution_height.unwrap_or(1080).to_string();
     let substitutions = HashMap::from([
@@ -1505,6 +1635,8 @@ pub fn prepare_launch(
         ("${user_properties}", "{}"),
         ("${resolution_width}", resolution_width.as_str()),
         ("${resolution_height}", resolution_height.as_str()),
+        ("${quickPlayPath}", quick_play_path_string.as_str()),
+        ("${quickPlayMultiplayer}", server_address.unwrap_or("")),
         (
             "${natives_directory}",
             natives_dir
@@ -1522,7 +1654,13 @@ pub fn prepare_launch(
     ]);
     let launch_features = HashMap::from([
         ("has_custom_resolution", true),
-        ("has_quick_plays_support", false),
+        (
+            "has_quick_plays_support",
+            supports_quick_play(&request.game_version),
+        ),
+        ("is_quick_play_multiplayer", server_address.is_some()),
+        ("is_quick_play_singleplayer", false),
+        ("is_quick_play_realms", false),
         ("is_demo_user", false),
     ]);
     let mut args = Vec::new();
@@ -1614,6 +1752,9 @@ pub fn prepare_launch(
     if request.fullscreen.unwrap_or(false) && !args.iter().any(|arg| arg == "--fullscreen") {
         args.push("--fullscreen".to_string());
     }
+    if let Some(address) = server_address {
+        append_quick_play_args(&mut args, address)?;
+    }
     Ok(PreparedLaunch {
         java_path: java_path.to_string(),
         game_dir,
@@ -1696,6 +1837,21 @@ mod tests {
     }
 
     #[test]
+    fn quick_play_is_enabled_only_for_supported_minecraft_versions() {
+        assert!(!supports_quick_play("1.20.4"));
+        assert!(supports_quick_play("1.20.5"));
+        assert!(supports_quick_play("1.21.1"));
+    }
+
+    #[test]
+    fn appends_server_address_as_quick_play_argument() {
+        let mut args = Vec::new();
+        append_quick_play_args(&mut args, "play.example.net:25565").unwrap();
+        assert_eq!(args, ["--quickPlayMultiplayer", "play.example.net:25565"]);
+        assert!(append_quick_play_args(&mut Vec::new(), "play.example.net:25565 extra").is_err());
+    }
+
+    #[test]
     fn applies_loader_rules_for_the_current_platform() {
         assert!(rule_matches(
             &json!({"action":"allow","os":{"name":os_name(),"arch":os_arch()}}),
@@ -1758,10 +1914,21 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_forge_profiles_from_neoforge_profiles() {
+        assert!(profile_matches_loader("1.20.1-forge-47.2.0", "forge"));
+        assert!(!profile_matches_loader("1.20.1-neoforge-20.4.237", "forge"));
+        assert!(profile_matches_loader(
+            "1.20.1-neoforge-20.4.237",
+            "neoforge"
+        ));
+        assert!(!profile_matches_loader("1.20.1-forge-47.2.0", "neoforge"));
+    }
+
+    #[test]
     fn builds_a_versioned_launch_command_from_metadata() {
         let root =
             std::env::temp_dir().join(format!("theboys-launch-test-{}", uuid::Uuid::new_v4()));
-        let version = "1.20.1";
+        let version = "1.21.1";
         let profile_dir = root.join("minecraft").join("versions").join(version);
         let instance_dir = root.join("instances").join("test_instance");
         fs::create_dir_all(&profile_dir).unwrap();
@@ -1784,7 +1951,15 @@ mod tests {
                         "--accessToken", "${auth_access_token}",
                         "--userType", "${user_type}",
                         "--version", "${version_name}",
-                        "--assetsDir", "${assets_root}"
+                        "--assetsDir", "${assets_root}",
+                        {
+                            "value": ["--quickPlayPath", "${quickPlayPath}"],
+                            "rules": [{"action": "allow", "features": {"has_quick_plays_support": true}}]
+                        },
+                        {
+                            "value": ["--quickPlayMultiplayer", "${quickPlayMultiplayer}"],
+                            "rules": [{"action": "allow", "features": {"is_quick_play_multiplayer": true}}]
+                        }
                     ]
                 }
             }))
@@ -1819,7 +1994,7 @@ mod tests {
             graphics_api: "opengl".to_string(),
             low_spec_mode: None,
             dedicated_gpu: None,
-            server_address: None,
+            server_address: Some("play.example.net:25565".to_string()),
             resolution_width: Some(1280),
             resolution_height: Some(720),
             fullscreen: Some(true),
@@ -1837,7 +2012,19 @@ mod tests {
         assert!(prepared.args.contains(&"legacy".to_string()));
         assert!(prepared.args.contains(&"--fullscreen".to_string()));
         assert!(prepared.args.contains(&"1280".to_string()));
+        assert!(prepared
+            .args
+            .contains(&"--quickPlayMultiplayer".to_string()));
+        assert!(prepared
+            .args
+            .contains(&"play.example.net:25565".to_string()));
+        assert!(prepared.args.contains(&"--quickPlayPath".to_string()));
+        assert!(prepared
+            .args
+            .iter()
+            .all(|argument| !argument.contains("${quickPlay")));
         assert_eq!(prepared.game_dir, instance_dir);
+        assert!(instance_dir.join("quickPlay").is_dir());
         fs::remove_dir_all(root).unwrap();
     }
 }

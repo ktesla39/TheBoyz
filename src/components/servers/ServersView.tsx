@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Globe,
   Plus,
@@ -91,8 +91,16 @@ export const ServersView: React.FC<ServersViewProps> = ({
   const [newServerAddress, setNewServerAddress] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBootInstanceId, setSelectedBootInstanceId] = useState<string>(
-    activeInstance?.id ?? ''
+    activeInstance?.id ?? instances[0]?.id ?? ''
   );
+
+  useEffect(() => {
+    if (activeInstance?.id) {
+      setSelectedBootInstanceId(activeInstance.id);
+    } else if (!instances.some((instance) => instance.id === selectedBootInstanceId)) {
+      setSelectedBootInstanceId(instances[0]?.id ?? '');
+    }
+  }, [activeInstance?.id, instances, selectedBootInstanceId]);
 
   const currentBootInstance = instances.find((i) => i.id === selectedBootInstanceId) ?? null;
 
@@ -238,7 +246,7 @@ export const ServersView: React.FC<ServersViewProps> = ({
             </div>
           </div>
           <p className="text-[11px] text-slate-400 font-mono leading-relaxed pt-1 break-words">
-            <strong>How it works:</strong> Clicking <strong>Direct Connect</strong> boots this instance with its installed mods and JVM heap memory, injecting <code>--server &lt;address&gt;</code> to jump straight into the server world without touching menus.
+            <strong>How it works:</strong> Clicking <strong>Direct Connect</strong> boots this instance with its installed mods and JVM memory, using Minecraft Quick Play to join the server without opening the multiplayer menu. Quick Play requires Minecraft 1.20.5 or newer.
           </p>
         </div>
 

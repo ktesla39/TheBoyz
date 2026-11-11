@@ -209,14 +209,11 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   playMinecraftClickSound();
                   onSelectActiveAccount(account.id);
                 }}
-                className={`card-obsidian p-4 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-4 ${
-                  isActive
-                    ? 'border-emerald-500/80 shadow-[0_0_15px_rgba(16,185,129,0.15)] ring-1 ring-emerald-500/40'
-                    : ''
-                }`}
+                data-tone={account.type === 'microsoft' ? 'green' : 'amber'}
+                className={`card-obsidian card-selectable p-4 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-4 ${isActive ? 'card-selected' : ''}`}
               >
                 <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="relative shrink-0 p-1 rounded-lg bg-black/50 border border-white/10">
+                  <div className="card-icon-tile relative shrink-0 p-1 rounded-lg">
                     <MinecraftSkinCanvas
                       skinUrl={account.skinUrl}
                       capeUrl={account.capeUrl}

@@ -333,6 +333,11 @@ export function applyLauncherTheme(
   root.style.setProperty('--mc-surface', resolvedColorScheme === 'light' ? '#f3f0e8' : config.surfaceColor);
   root.style.setProperty('--mc-surface-hover', resolvedColorScheme === 'light' ? '#e9e5da' : config.surfaceHover);
   root.style.setProperty('--mc-border', resolvedColorScheme === 'light' ? '#bcb7aa' : config.borderColor);
+  root.style.setProperty('--mc-text', resolvedColorScheme === 'light' ? '#292820' : '#e2e8f0');
+  root.style.setProperty('--mc-muted', resolvedColorScheme === 'light' ? '#575247' : '#94a3b8');
+  root.style.setProperty('--mc-panel', resolvedColorScheme === 'light' ? '#f3f0e8' : config.surfaceColor);
+  root.style.setProperty('--mc-panel-raised', resolvedColorScheme === 'light' ? '#fffdf7' : config.surfaceHover);
+  root.style.setProperty('--mc-line', resolvedColorScheme === 'light' ? '#bcb7aa' : config.borderColor);
   root.style.setProperty('--mc-accent', config.accentColor);
   root.style.setProperty('--mc-accent-hover', config.accentHover);
   root.style.setProperty('--mc-badge-bg', config.badgeBg);
