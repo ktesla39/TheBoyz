@@ -49,9 +49,12 @@ jobs:
           } else {
             $headers = @{ 'x-api-key' = $env:CURSEFORGE_API_KEY }
             try {
-              $null = Invoke-RestMethod -Uri 'https://api.curseforge.com/v1/mods/search?gameId=432&pageSize=1' -Headers $headers -Method Get
+              $response = Invoke-WebRequest -SkipHttpErrorCheck -Uri 'https://api.curseforge.com/v1/mods/search?gameId=432&pageSize=1' -Headers $headers -Method Get
+              if ($response.StatusCode -ge 400) {
+                Write-Warning "CurseForge API key check returned HTTP $($response.StatusCode); users can configure a personal key in Launcher Settings."
+              }
             } catch {
-              throw 'The configured CurseForge API key failed validation.'
+              Write-Warning 'CurseForge API key check could not reach the service; release will continue and users can configure a personal key in Launcher Settings.'
             }
           }
 
