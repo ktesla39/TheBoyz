@@ -246,7 +246,7 @@ export const ServersView: React.FC<ServersViewProps> = ({
             </div>
           </div>
           <p className="text-[11px] text-slate-400 font-mono leading-relaxed pt-1 break-words">
-            <strong>How it works:</strong> Clicking <strong>Direct Connect</strong> boots this instance with its installed mods and JVM memory, using Minecraft Quick Play to join the server without opening the multiplayer menu. Quick Play requires Minecraft 1.20.5 or newer.
+            <strong>How it works:</strong> Clicking <strong>Direct Connect</strong> launches this instance with its installed mods and JVM memory, using Minecraft Quick Play to join the server directly without opening the multiplayer menu. Quick Play requires Minecraft 1.20.5 or newer.
           </p>
         </div>
 
@@ -263,7 +263,7 @@ export const ServersView: React.FC<ServersViewProps> = ({
                 }
               }}
               className="select-mc text-xs font-mono py-2 px-3 w-full sm:max-w-[220px] truncate"
-              title="Select which instance is booted when connecting to multiplayer servers"
+              title="Select which instance is launched when connecting to multiplayer servers"
             >
               {instances.map((inst) => (
                 <option key={inst.id} value={inst.id}>
@@ -474,7 +474,7 @@ export const ServersView: React.FC<ServersViewProps> = ({
               </div>
 
               <div className="p-3 bg-black/30 rounded-xl border border-white/5 text-[11px] font-mono text-slate-400">
-                Direct connect will boot with: <strong className="text-emerald-400">{currentBootInstance?.name}</strong> (MC {currentBootInstance?.gameVersion})
+                Direct connect will launch with: <strong className="text-emerald-400">{currentBootInstance?.name}</strong> (MC {currentBootInstance?.gameVersion})
               </div>
 
               <div className="pt-3 border-t border-white/5 flex items-center justify-end gap-3">

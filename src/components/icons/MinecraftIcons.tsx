@@ -5,24 +5,36 @@ interface IconProps {
   size?: number;
 }
 
-/** The Boys Master Launcher Crest */
+/** The Boys Master Launcher Crest: Golden Royal Crown with Obsidian Shield & Emerald Core */
 export const TheBoysEmblemIcon: React.FC<IconProps> = ({ className = 'w-6 h-6', size = 24 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} shapeRendering="crispEdges">
+    {/* Outer Obsidian Shield Contour */}
     <path
-      d="M12 2L3 6.5V13C3 18.5 6.8 21.6 12 23C17.2 21.6 21 18.5 21 13V6.5L12 2Z"
+      d="M12 2L4 5V12C4 17.5 7.5 21 12 22.5C16.5 21 20 17.5 20 12V5L12 2Z"
       fill="#141824"
-      stroke="#388e3c"
-      strokeWidth="1.8"
-      strokeLinejoin="round"
+      stroke="#2e384d"
+      strokeWidth="1.2"
     />
+    {/* Shield Inner Inset */}
     <path
-      d="M7.5 9.5H16.5M12 9.5V18M9.5 13H14.5"
-      stroke="#4caf50"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      d="M12 3.5L5.5 6V11.8C5.5 16.2 8.3 19.3 12 20.6C15.7 19.3 18.5 16.2 18.5 11.8V6L12 3.5Z"
+      fill="#0c0f17"
     />
-    <circle cx="12" cy="6" r="1.5" fill="#81c784" />
+    {/* Golden Royal Crown */}
+    <rect x="7" y="10" width="10" height="2" fill="#d97706" />
+    <rect x="8" y="11" width="8" height="1" fill="#f59e0b" />
+    <rect x="7" y="7" width="2" height="3" fill="#fbbf24" />
+    <rect x="11" y="6" width="2" height="4" fill="#fde68a" />
+    <rect x="15" y="7" width="2" height="3" fill="#fbbf24" />
+    <rect x="8" y="9" width="8" height="1" fill="#f59e0b" />
+    {/* Crown Jewels */}
+    <rect x="7" y="6" width="2" height="1" fill="#ef4444" />
+    <rect x="11" y="5" width="2" height="1" fill="#10b981" />
+    <rect x="15" y="6" width="2" height="1" fill="#38bdf8" />
+    {/* Central Floating Emerald Gem */}
+    <path d="M12 13L14.5 16L12 19L9.5 16L12 13Z" fill="#10b981" />
+    <path d="M12 13.8L13.8 16L12 18.2L10.2 16L12 13.8Z" fill="#34d399" />
+    <rect x="11.5" y="15" width="1" height="2" fill="#ffffff" />
   </svg>
 );
 
@@ -367,7 +379,6 @@ export const TridentIcon: React.FC<IconProps> = ({ className = 'w-5 h-5', size =
     <rect x="8" y="1" width="1" height="3" fill="#ffffff" />
   </svg>
 );
-
 /** Authentic 16x16 Pixel Art Shield */
 export const MinecraftShieldIcon: React.FC<IconProps> = ({ className = 'w-5 h-5', size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} shapeRendering="crispEdges">
@@ -376,6 +387,58 @@ export const MinecraftShieldIcon: React.FC<IconProps> = ({ className = 'w-5 h-5'
     <rect x="6" y="13" width="4" height="2" fill="#78350f" />
     <rect x="7" y="3" width="2" height="10" fill="#94a3b8" />
     <rect x="4" y="6" width="8" height="2" fill="#94a3b8" />
+  </svg>
+);
+
+/** Authentic 16x16 Pixel Art Nether Star */
+export const NetherStarIcon: React.FC<IconProps> = ({ className = 'w-5 h-5', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} shapeRendering="crispEdges">
+    {/* Center Core */}
+    <rect x="7" y="7" width="2" height="2" fill="#ffffff" />
+    <rect x="6" y="6" width="4" height="4" fill="#f0fdff" fillOpacity="0.8" />
+    {/* Star Arms */}
+    <rect x="7" y="2" width="2" height="4" fill="#7dd3fc" />
+    <rect x="7" y="10" width="2" height="4" fill="#7dd3fc" />
+    <rect x="2" y="7" width="4" height="2" fill="#7dd3fc" />
+    <rect x="10" y="7" width="4" height="2" fill="#7dd3fc" />
+    {/* Inner White Gleam */}
+    <rect x="7" y="4" width="2" height="2" fill="#ffffff" />
+    <rect x="7" y="10" width="2" height="2" fill="#ffffff" />
+    <rect x="4" y="7" width="2" height="2" fill="#ffffff" />
+    <rect x="10" y="7" width="2" height="2" fill="#ffffff" />
+    {/* Diagonal Flares */}
+    <rect x="4" y="4" width="2" height="2" fill="#38bdf8" />
+    <rect x="10" y="4" width="2" height="2" fill="#38bdf8" />
+    <rect x="4" y="10" width="2" height="2" fill="#38bdf8" />
+    <rect x="10" y="10" width="2" height="2" fill="#38bdf8" />
+  </svg>
+);
+
+/** Authentic 16x16 Pixel Art Ender Pearl */
+export const EnderPearlIcon: React.FC<IconProps> = ({ className = 'w-5 h-5', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} shapeRendering="crispEdges">
+    <circle cx="8" cy="8" r="6" fill="#042f2e" />
+    <circle cx="8" cy="8" r="5" fill="#0d5953" />
+    <circle cx="7.5" cy="7.5" r="3.5" fill="#14b8a6" />
+    <rect x="6" y="6" width="2" height="2" fill="#5eead4" />
+    <rect x="7" y="7" width="1" height="1" fill="#ffffff" />
+    <circle cx="10.5" cy="10.5" r="1.5" fill="#042f2e" />
+  </svg>
+);
+
+/** Authentic 16x16 Pixel Art Elytra Wings */
+export const ElytraWingsIcon: React.FC<IconProps> = ({ className = 'w-5 h-5', size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} shapeRendering="crispEdges">
+    {/* Spine */}
+    <rect x="7" y="2" width="2" height="5" fill="#1e293b" />
+    {/* Left Wing */}
+    <path d="M7 2L2 5V12L7 14V2Z" fill="#334155" />
+    <path d="M6 4L3 6V10L6 12V4Z" fill="#475569" />
+    <rect x="4" y="6" width="1" height="3" fill="#94a3b8" />
+    {/* Right Wing */}
+    <path d="M9 2L14 5V12L9 14V2Z" fill="#1e293b" />
+    <path d="M10 4L13 6V10L10 12V4Z" fill="#334155" />
+    <rect x="11" y="6" width="1" height="3" fill="#64748b" />
   </svg>
 );
 

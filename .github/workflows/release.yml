@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     env:
       VITE_GITHUB_REPOSITORY: ${{ github.repository }}
-      VITE_MICROSOFT_CLIENT_ID: fa5a840b-f490-4075-aaa9-83a6763c602e
+      VITE_MICROSOFT_CLIENT_ID: ${{ secrets.VITE_MICROSOFT_CLIENT_ID || vars.VITE_MICROSOFT_CLIENT_ID || 'fa5a840b-f490-4075-aaa9-83a6763c602e' }}
       VITE_TAURI_UPDATER_ENABLED: 'true'
       TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -49,6 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_GITHUB_REPOSITORY: ${{ github.repository }}
+          VITE_MICROSOFT_CLIENT_ID: ${{ secrets.VITE_MICROSOFT_CLIENT_ID || vars.VITE_MICROSOFT_CLIENT_ID || 'fa5a840b-f490-4075-aaa9-83a6763c602e' }}
           VITE_TAURI_UPDATER_ENABLED: 'true'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

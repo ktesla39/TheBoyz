@@ -232,3 +232,99 @@ export async function invokeToggleModFile(instanceId: string, fileName: string, 
 export async function invokeDeleteModFile(instanceId: string, fileName: string): Promise<boolean> {
   return invokeTauri('delete_mod_file', { instanceId, fileName });
 }
+
+export interface TauriInstallAddonRequest {
+  instance_id: string;
+  addon_id: string;
+  addon_name: string;
+  addon_type: string;
+  provider: 'modrinth' | 'curseforge';
+  game_version?: string;
+  loader?: string;
+  direct_download_url?: string;
+  file_name?: string;
+}
+
+export interface TauriInstallAddonResult {
+  success: boolean;
+  file_name: string;
+  file_path: string;
+  size_bytes: number;
+  message: string;
+}
+
+export interface TauriInstanceAddonItem {
+  id: string;
+  file_name: string;
+  name: string;
+  addon_type: string;
+  enabled: boolean;
+  size_bytes: number;
+  path: string;
+}
+
+export interface TauriLauncherUpdateInfo {
+  has_update: boolean;
+  current_version: string;
+  latest_version: string;
+  release_name: string;
+  release_notes: string;
+  download_url: string | null;
+  asset_name: string | null;
+}
+
+export async function invokeInstallInstanceAddon(
+  request: TauriInstallAddonRequest
+): Promise<TauriInstallAddonResult> {
+  return invokeTauri<TauriInstallAddonResult>('install_instance_addon', { request });
+}
+
+export async function invokeListInstanceAddons(
+  instanceId: string
+): Promise<TauriInstanceAddonItem[]> {
+  return invokeTauri<TauriInstanceAddonItem[]>('list_instance_addons', { instanceId });
+}
+
+export async function invokeToggleInstanceAddon(
+  instanceId: string,
+  addonType: string,
+  fileName: string,
+  enable: boolean
+): Promise<string> {
+  return invokeTauri<string>('toggle_instance_addon', {
+    instanceId,
+    addonType,
+    fileName,
+    enable,
+  });
+}
+
+export async function invokeDeleteInstanceAddon(
+  instanceId: string,
+  addonType: string,
+  fileName: string
+): Promise<boolean> {
+  return invokeTauri<boolean>('delete_instance_addon', {
+    instanceId,
+    addonType,
+    fileName,
+  });
+}
+
+export async function invokeLoginWithMicrosoftLoopback(
+  clientId?: string,
+  port?: number
+): Promise<LauncherAccount> {
+  return invokeTauri<LauncherAccount>('login_with_microsoft_loopback', {
+    clientId,
+    port,
+  });
+}
+
+export async function invokeCheckGithubLauncherUpdate(): Promise<TauriLauncherUpdateInfo> {
+  return invokeTauri<TauriLauncherUpdateInfo>('check_github_launcher_update');
+}
+
+export async function invokeApplyGithubLauncherUpdate(downloadUrl: string): Promise<boolean> {
+  return invokeTauri<boolean>('apply_github_launcher_update', { downloadUrl });
+}

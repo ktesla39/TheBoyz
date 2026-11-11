@@ -1,20 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Play,
   Square,
   ChevronDown,
   Search,
   Plus,
-  Check,
   Settings,
 } from 'lucide-react';
 import { MinecraftInstance } from '../../types/instance';
 import { LauncherAccount } from '../../types/auth';
 import { MinecraftPlayerHead } from '../skin/MinecraftPlayerHead';
-import { LoaderGlyph } from '../icons/LoaderGlyph';
-import type { ModLoaderType } from '../../types/instance';
+import { InstanceCircleLogo } from '../instances/InstanceCircleLogo';
 import { playMinecraftClickSound } from '../../services/soundService';
 import type { LauncherProgress } from '../../services/tauriBridge';
+import { LauncherSettings } from '../../services/storageService';
 
 interface TopHeaderProps {
   currentTabTitle?: string;
@@ -26,6 +26,8 @@ interface TopHeaderProps {
   desktopAvailable: boolean;
   launchProgress: LauncherProgress | null;
   launchElapsedMs: number;
+  settings?: LauncherSettings;
+  onUpdateSettings?: (newSettings: LauncherSettings) => void;
   onLaunchGame: (serverAddress?: string) => void;
   onStopGame: () => void;
   onSelectInstance: (id: string) => void;
@@ -53,22 +55,70 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 }) => {
   const [isInstanceMenuOpen, setIsInstanceMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
-  // Close dropdown on click outside
+  const triggerBtnRef = useRef<HTMLButtonElement | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
+
+  const updatePopupPosition = useCallback(() => {
+    if (!triggerBtnRef.current) return;
+    const rect = triggerBtnRef.current.getBoundingClientRect();
+    const gap = 10; // small 8-12px gap
+    const top = rect.bottom + gap;
+    const popupWidth = Math.min(384, Math.max(300, window.innerWidth - 32));
+
+    // Anchor popup right edge with trigger button right edge
+    let left = rect.right - popupWidth;
+    // Ensure it never extends outside the window horizontally
+    if (left < 16) left = 16;
+    if (left + popupWidth > window.innerWidth - 16) {
+      left = Math.max(16, window.innerWidth - popupWidth - 16);
+    }
+
+    // Ensure it never extends outside the window vertically
+    const maxHeight = Math.max(180, window.innerHeight - top - 16);
+    setPopupPos({ top, left, width: popupWidth, maxHeight });
+  }, []);
+
+  // Update position on window resize and scroll, and handle outside click
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    if (!isInstanceMenuOpen) return;
+    updatePopupPosition();
+
+    const handleResizeOrScroll = () => {
+      updatePopupPosition();
+    };
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        popupRef.current &&
+        !popupRef.current.contains(target) &&
+        triggerBtnRef.current &&
+        !triggerBtnRef.current.contains(target)
+      ) {
         setIsInstanceMenuOpen(false);
       }
-    }
-    if (isInstanceMenuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isInstanceMenuOpen]);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsInstanceMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResizeOrScroll);
+    window.addEventListener('scroll', handleResizeOrScroll, true);
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('resize', handleResizeOrScroll);
+      window.removeEventListener('scroll', handleResizeOrScroll, true);
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isInstanceMenuOpen, updatePopupPosition]);
 
   const filteredInstances = instances.filter((inst) =>
     inst.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -76,58 +126,61 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     inst.loader.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getInstanceIcon = (iconName: string | undefined, loader: ModLoaderType) => {
-    if (iconName?.startsWith('data:') || iconName?.startsWith('http')) {
-      return <img src={iconName} alt="icon" className="w-4 h-4 rounded object-cover" />;
-    }
-    return <LoaderGlyph loader={loader} className="w-4 h-4" />;
-  };
-
   return (
-    <header className="min-h-16 h-auto px-4 sm:px-6 border-b border-[#1c2230] bg-[#0c1017]/90 backdrop-blur-md flex items-center justify-end gap-3 sm:gap-4 shrink-0 select-none z-30 relative">
-      {/* Right Controls: Instance Selection with Explanation + Player Account + Tactile Play Button */}
+    <header className="min-h-16 h-auto px-4 sm:px-6 border-b border-[var(--mc-border)] bg-[var(--mc-surface)]/90 backdrop-blur-md flex items-center justify-end gap-3 sm:gap-4 shrink-0 select-none z-30 relative transition-colors duration-200">
+      {/* Right Controls: Instance Selection + Player Account + Tactile Play Button */}
       <div className="flex items-center gap-2.5 sm:gap-4 relative w-full justify-end">
-        {/* Active Instance Button with Descriptive Label explaining how the launcher chooses the instance */}
+        {/* Active Instance Switcher */}
         {activeInstance && (
-          <div className="relative shrink-0" ref={menuRef}>
+          <div className="relative shrink-0">
             <button
+              ref={triggerBtnRef}
               onClick={() => {
                 playMinecraftClickSound();
                 setIsInstanceMenuOpen((prev) => !prev);
               }}
-              className="btn-mc flex items-center gap-2.5 px-3 py-1.5 rounded text-left cursor-pointer group shadow-sm hover:border-[var(--mc-accent)] min-w-0"
-              title="Choose the instance used for Play and server direct connect"
+              className="btn-mc flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-left cursor-pointer group shadow-sm hover:border-[var(--mc-accent)] min-w-0"
+              title="Click to switch Minecraft instance"
             >
-              <div className="w-7 h-7 rounded bg-black/60 border border-white/10 flex items-center justify-center text-xs shrink-0 text-[var(--mc-accent)]">
-                {getInstanceIcon(activeInstance.icon, activeInstance.loader)}
-              </div>
+              <InstanceCircleLogo
+                loader={activeInstance.loader}
+                icon={activeInstance.icon}
+                size="sm"
+              />
               <div className="text-left min-w-0 pr-1 max-w-[140px] sm:max-w-[200px]">
-                <div className="flex items-center gap-1.5 leading-none">
-                  <span className="text-[9px] font-mono uppercase text-[var(--mc-accent)] font-extrabold tracking-wider truncate">
-                    Active instance
-                  </span>
-                </div>
-                <div className="text-xs font-black text-slate-100 truncate font-display mt-0.5 group-hover:text-[var(--mc-accent)]">
+                <div className="text-xs font-bold text-white truncate font-display group-hover:text-emerald-300">
                   {activeInstance.name}
                 </div>
-                <div className="text-[10px] text-slate-400 font-mono hidden sm:block truncate">
+                <div className="text-[10px] text-emerald-400 font-mono hidden sm:block truncate font-bold">
                   MC {activeInstance.gameVersion} · {activeInstance.loader.toUpperCase()}
                 </div>
               </div>
               <ChevronDown
-                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform shrink-0 ${isInstanceMenuOpen ? 'rotate-180' : ''
-                  }`}
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform shrink-0 ${
+                  isInstanceMenuOpen ? 'rotate-180' : ''
+                }`}
               />
             </button>
 
-            {/* Instance selector */}
-            {isInstanceMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1rem))] sm:w-96 rounded-xl card-obsidian border border-white/15 shadow-[0_20px_60px_rgba(0,0,0,0.9)] z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-3 py-2.5 border-b border-white/10 bg-[#090c12]">
+            {/* Portal Instance Selector Dropdown */}
+            {isInstanceMenuOpen && popupPos && createPortal(
+              <div
+                ref={popupRef}
+                style={{
+                  position: 'fixed',
+                  top: `${popupPos.top}px`,
+                  left: `${popupPos.left}px`,
+                  width: `${popupPos.width}px`,
+                  maxHeight: `${popupPos.maxHeight}px`,
+                  zIndex: 9999,
+                }}
+                className="rounded-xl card-obsidian border border-white/20 shadow-[0_24px_60px_rgba(0,0,0,0.92)] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 transition-all select-none"
+              >
+                <div className="px-3 py-2.5 border-b border-white/10 bg-black/50 shrink-0">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-white font-display">Choose an instance</div>
-                      <div className="text-[10px] text-slate-400 font-mono">Used for Play and server direct connect</div>
+                      <div className="text-xs font-bold text-white font-display">Select Instance</div>
+                      <div className="text-[10px] text-slate-400 font-mono">Choose your world profile and modpack</div>
                     </div>
                     <button
                       type="button"
@@ -154,16 +207,17 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
                   </div>
                 </div>
 
-                <div className="max-h-72 overflow-y-auto p-2 space-y-1">
+                <div className="overflow-y-auto p-2 space-y-1.5 flex-1 min-h-0">
                   {filteredInstances.map((inst) => {
                     const isSelected = inst.id === activeInstance.id;
                     return (
                       <div
                         key={inst.id}
-                        className={`flex items-center gap-1 rounded-lg border transition-colors ${isSelected
-                          ? 'bg-[#18212e] border-[var(--mc-accent)]/50'
-                          : 'border-transparent hover:bg-white/[0.05]'
-                          }`}
+                        className={`flex items-center gap-2 rounded-lg border p-1.5 transition-all ${
+                          isSelected
+                            ? 'bg-emerald-500/15 border-emerald-500/40 shadow-sm'
+                            : 'border-transparent hover:bg-white/[0.06] hover:border-white/10'
+                        }`}
                       >
                         <button
                           type="button"
@@ -173,51 +227,70 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
                             onSelectInstance(inst.id);
                             setIsInstanceMenuOpen(false);
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-2.5 p-2 text-left"
+                          className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
                         >
-                          <span className="w-8 h-8 rounded-lg bg-black/50 border border-white/10 flex items-center justify-center shrink-0 text-[var(--mc-accent)]">
-                            {getInstanceIcon(inst.icon, inst.loader)}
-                          </span>
+                          <InstanceCircleLogo
+                            loader={inst.loader}
+                            icon={inst.icon}
+                            size="md"
+                          />
                           <span className="min-w-0 flex-1">
                             <span className="block text-xs font-bold text-white font-display truncate">
                               {inst.name}
                             </span>
                             <span className="block text-[10px] font-mono text-slate-400 mt-0.5 truncate">
-                              MC {inst.gameVersion} · {inst.loader.toUpperCase()} · {(inst.mods || []).length} mods
+                              MC {inst.gameVersion} · <span className="uppercase text-emerald-400 font-bold">{inst.loader}</span> · {(inst.mods || []).length} mods
                             </span>
-                          </span>
-                          <span className={`shrink-0 text-[10px] font-mono font-bold ${isSelected ? 'text-[var(--mc-accent)]' : 'text-slate-500'}`}>
-                            {isSelected ? <Check className="w-4 h-4" /> : 'Select'}
                           </span>
                         </button>
 
-                        {onManageInstance && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              playMinecraftClickSound();
-                              setIsInstanceMenuOpen(false);
-                              onManageInstance(inst.id);
-                            }}
-                            className="btn-mc p-1.5 mr-1 text-slate-300 hover:text-white rounded cursor-pointer"
-                            title={`Manage ${inst.name}`}
-                            aria-label={`Manage ${inst.name}`}
-                          >
-                            <Settings className="w-3.5 h-3.5 text-[var(--mc-accent)]" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isSelected ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              ACTIVE
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playMinecraftClickSound();
+                                onSelectInstance(inst.id);
+                                setIsInstanceMenuOpen(false);
+                              }}
+                              className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white/5 hover:bg-emerald-500/20 text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                            >
+                              Use
+                            </button>
+                          )}
+
+                          {onManageInstance && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playMinecraftClickSound();
+                                setIsInstanceMenuOpen(false);
+                                onManageInstance(inst.id);
+                              }}
+                              className="btn-mc p-1.5 text-slate-300 hover:text-white rounded cursor-pointer"
+                              title={`Manage ${inst.name}`}
+                              aria-label={`Manage ${inst.name}`}
+                            >
+                              <Settings className="w-3.5 h-3.5 text-slate-300" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
                   {filteredInstances.length === 0 && (
-                    <p className="p-3 text-center text-xs text-slate-400 font-mono">No matching instances.</p>
+                    <p className="p-3 text-center text-xs text-slate-400 font-mono">No matching instances found.</p>
                   )}
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
         )}
-
 
         {/* Player Account Profile Chip with 3D Head */}
         {activeAccount && (

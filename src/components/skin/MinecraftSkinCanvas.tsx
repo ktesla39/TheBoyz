@@ -246,15 +246,6 @@ export const MinecraftSkinCanvas: React.FC<MinecraftSkinCanvasProps> = ({
           </button>
         </div>
       )}
-
-      {capeUrl && (
-        <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
-          <span className="text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 flex items-center gap-1 shadow">
-            <Shield className="w-2.5 h-2.5" />
-            <span>Cape</span>
-          </span>
-        </div>
-      )}
     </div>
   );
 };

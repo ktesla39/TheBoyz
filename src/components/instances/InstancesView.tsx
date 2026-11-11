@@ -10,18 +10,22 @@ import {
   Monitor,
   FolderInput,
   LoaderCircle,
+  Download,
+  Sliders,
+  Settings,
+  Sparkles,
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { MinecraftInstance, ModLoaderType } from '../../types/instance';
 import { CreateInstanceModal } from './CreateInstanceModal';
 import { DesktopShortcutModal } from '../common/DesktopShortcutModal';
+import { InstanceAddonsModal } from './InstanceAddonsModal';
+import { EditInstanceModal } from './EditInstanceModal';
 import {
   DiamondSwordIcon,
-  GrassBlockIcon,
-  RamChipIcon,
-  OpenGlApiIcon,
-  VulkanApiIcon,
 } from '../icons/MinecraftIcons';
+import { InstanceCircleLogo } from './InstanceCircleLogo';
+import { playMinecraftClickSound } from '../../services/soundService';
 
 interface InstancesViewProps {
   instances: MinecraftInstance[];
@@ -34,6 +38,7 @@ interface InstancesViewProps {
   onImportInstance: (sourcePath: string) => Promise<void>;
   onManageMods: (instance: MinecraftInstance) => void;
   onOpenDetail: (instance: MinecraftInstance) => void;
+  onUpdateInstance?: (updated: MinecraftInstance) => void;
 }
 
 export const InstancesView: React.FC<InstancesViewProps> = ({
@@ -47,11 +52,14 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
   onImportInstance,
   onManageMods,
   onOpenDetail,
+  onUpdateInstance,
 }) => {
   const [search, setSearch] = useState('');
   const [filterLoader, setFilterLoader] = useState<ModLoaderType | 'all'>('all');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [shortcutInstance, setShortcutInstance] = useState<MinecraftInstance | null>(null);
+  const [addonsModalInstance, setAddonsModalInstance] = useState<MinecraftInstance | null>(null);
+  const [editModalInstance, setEditModalInstance] = useState<MinecraftInstance | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
 
@@ -91,7 +99,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
             Minecraft Instance Manager
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Configure isolated directories, mods, and Java arguments for each installation.
+            Configure isolated directories, custom artwork, download mods, and tune engine settings for each installation.
           </p>
         </div>
 
@@ -108,7 +116,10 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setIsCreateOpen(true)}
+            onClick={() => {
+              playMinecraftClickSound();
+              setIsCreateOpen(true);
+            }}
             className="btn-mc btn-mc-green flex items-center gap-2 px-4 py-2 text-white font-black text-xs rounded-lg cursor-pointer font-display"
           >
             <Plus className="w-4 h-4" />
@@ -116,14 +127,12 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           </button>
         </div>
       </div>
+
       {importError && (
         <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
           {importError}
         </div>
       )}
-      <p className="text-[11px] text-slate-400 font-mono">
-        Imports copy your saves, mods, configs, resource packs, shaders, and server settings. The source folder is never changed. For SKLauncher 4, select the profile&apos;s Game Directory.
-      </p>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -144,7 +153,10 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           {(['all', 'vanilla', 'fabric', 'forge', 'neoforge', 'quilt'] as const).map((l) => (
             <button
               key={l}
-              onClick={() => setFilterLoader(l)}
+              onClick={() => {
+                playMinecraftClickSound();
+                setFilterLoader(l);
+              }}
               className={`btn-mc px-3 py-1 rounded text-xs font-bold font-mono uppercase transition-all cursor-pointer ${
                 filterLoader === l
                   ? 'btn-mc-green text-white shadow-sm'
@@ -157,7 +169,6 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
         </div>
       </div>
 
-
       {/* Instances Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredInstances.map((inst) => {
@@ -167,25 +178,51 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           return (
             <div
               key={inst.id}
-              onClick={() => onSelectActiveInstance(inst.id)}
+              onClick={() => {
+                playMinecraftClickSound();
+                onSelectActiveInstance(inst.id);
+              }}
               data-tone={inst.loader === 'fabric' ? 'ice' : inst.loader === 'quilt' ? 'violet' : inst.loader === 'forge' || inst.loader === 'neoforge' ? 'amber' : 'green'}
-              className={`card-obsidian card-selectable min-w-0 overflow-hidden p-5 rounded-xl flex flex-col justify-between gap-4 transition-all cursor-pointer ${isActive ? 'card-selected' : ''}`}
+              className={`card-obsidian card-selectable card-tactile min-w-0 overflow-hidden p-5 rounded-xl flex flex-col justify-between gap-4 transition-all cursor-pointer ${isActive ? 'card-selected' : ''}`}
             >
               {/* Top Details */}
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-3 min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="card-icon-tile w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
-                      <GrassBlockIcon className="w-5 h-5" />
-                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playMinecraftClickSound();
+                        setEditModalInstance(inst);
+                      }}
+                      className="group relative rounded-full focus:outline-none"
+                      title="Click to customize instance icon"
+                    >
+                      <InstanceCircleLogo
+                        loader={inst.loader}
+                        icon={inst.icon}
+                        size="md"
+                        className="group-hover:scale-105 transition-transform"
+                      />
+                    </button>
+
                     <div className="min-w-0 flex-1">
-                      <h3 className="text-base font-black text-white font-display tracking-tight truncate max-w-[170px] sm:max-w-[210px]">
+                      <h3
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          playMinecraftClickSound();
+                          setEditModalInstance(inst);
+                        }}
+                        className="text-base font-black text-white font-display tracking-tight truncate max-w-[170px] sm:max-w-[210px] hover:text-[var(--mc-accent)] transition-colors cursor-pointer"
+                        title="Click to rename or edit instance"
+                      >
                         {inst.name}
                       </h3>
                       <div className="flex items-center gap-2 text-xs font-mono text-[var(--mc-accent)] mt-0.5 truncate">
                         <span className="font-semibold">MC {inst.gameVersion}</span>
                         <span className="text-slate-600">·</span>
-                        <span className="uppercase text-slate-300">{inst.loader}</span>
+                        <span className="uppercase text-slate-300 font-bold">{inst.loader}</span>
                       </div>
                     </div>
                   </div>
@@ -200,6 +237,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        playMinecraftClickSound();
                         onSelectActiveInstance(inst.id);
                       }}
                       className="btn-mc btn-mc-diamond text-[10px] font-bold font-display text-white px-2.5 py-1 rounded cursor-pointer shrink-0 shadow-sm"
@@ -223,17 +261,41 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     <div className="text-slate-200 font-bold mt-0.5 truncate">{activeModsCount} enabled</div>
                   </div>
                   <div className="truncate">
-                    <div className="uppercase text-slate-400 text-[9px]">Time to Start</div>
-                    <div
-                      className="text-slate-200 font-bold mt-0.5 truncate"
-                      title="Measured until the Minecraft Java process starts; world loading continues afterward."
-                    >
-                      {inst.lastLaunchDurationMs === undefined
-                        ? 'Not launched'
-                        : `${(inst.lastLaunchDurationMs / 1000).toFixed(1)} sec`}
-                    </div>
+                    <div className="uppercase text-slate-400 text-[9px]">Packs</div>
+                    <div className="text-slate-200 font-bold mt-0.5 truncate">{(inst.packs || []).length} installed</div>
                   </div>
                 </div>
+              </div>
+
+              {/* In-Card Direct Addons & Edit Row */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playMinecraftClickSound();
+                    setAddonsModalInstance(inst);
+                  }}
+                  className="btn-mc btn-mc-diamond flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 text-xs text-white font-bold rounded cursor-pointer font-display shadow-sm"
+                  title="Download and install mods, resource packs, shaders directly to this instance"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Get Addons</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playMinecraftClickSound();
+                    setEditModalInstance(inst);
+                  }}
+                  className="btn-mc flex items-center justify-center gap-1.5 py-1.5 px-2.5 text-xs text-slate-200 hover:text-white font-bold rounded cursor-pointer font-display"
+                  title="Rename, choose custom icon, change loader & version"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Edit</span>
+                </button>
               </div>
 
               {/* Bottom Actions */}
@@ -243,6 +305,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      playMinecraftClickSound();
                       setShortcutInstance(inst);
                     }}
                     className="btn-mc p-1.5 rounded text-slate-300 hover:text-cyan-300 cursor-pointer"
@@ -255,6 +318,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      playMinecraftClickSound();
                       onManageMods(inst);
                     }}
                     className="btn-mc p-1.5 rounded text-slate-300 hover:text-white cursor-pointer"
@@ -267,6 +331,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      playMinecraftClickSound();
                       onCloneInstance(inst.id);
                     }}
                     className="btn-mc p-1.5 rounded text-slate-300 hover:text-white cursor-pointer"
@@ -280,6 +345,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        playMinecraftClickSound();
                         onDeleteInstance(inst.id);
                       }}
                       className="btn-mc btn-mc-red p-1.5 rounded text-white cursor-pointer"
@@ -295,6 +361,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      playMinecraftClickSound();
                       onOpenDetail(inst);
                     }}
                     className="btn-mc px-2 py-1.5 text-xs font-bold text-slate-200 hover:text-white rounded cursor-pointer font-display"
@@ -306,16 +373,16 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      playMinecraftClickSound();
                       onLaunchInstance(inst.id);
                     }}
-                    className="btn-mc btn-mc-green flex items-center gap-1 px-2 py-1.5 text-white font-black text-xs rounded cursor-pointer font-display shadow-md"
+                    className="btn-mc btn-mc-green flex items-center gap-1 px-3 py-1.5 text-white font-black text-xs rounded cursor-pointer font-display shadow-md"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span>Launch</span>
                   </button>
                 </div>
               </div>
-
             </div>
           );
         })}
@@ -335,6 +402,31 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           isOpen={Boolean(shortcutInstance)}
           onClose={() => setShortcutInstance(null)}
           instance={shortcutInstance}
+        />
+      )}
+
+      {/* Direct In-Page Addons Downloader Modal */}
+      {addonsModalInstance && (
+        <InstanceAddonsModal
+          instance={addonsModalInstance}
+          isOpen={Boolean(addonsModalInstance)}
+          onClose={() => setAddonsModalInstance(null)}
+          onUpdateInstance={(updated) => {
+            if (onUpdateInstance) onUpdateInstance(updated);
+            setAddonsModalInstance(updated);
+          }}
+        />
+      )}
+
+      {/* Direct In-Page Instance Customizer Modal */}
+      {editModalInstance && (
+        <EditInstanceModal
+          instance={editModalInstance}
+          isOpen={Boolean(editModalInstance)}
+          onClose={() => setEditModalInstance(null)}
+          onSave={(updated) => {
+            if (onUpdateInstance) onUpdateInstance(updated);
+          }}
         />
       )}
     </div>

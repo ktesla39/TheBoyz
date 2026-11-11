@@ -17,10 +17,11 @@ import {
 } from 'lucide-react';
 import { MinecraftInstance } from '../../types/instance';
 import { NetheriteIngotIcon, EnderEyeIcon, GrassBlockIcon, CraftingTableIcon } from '../icons/MinecraftIcons';
-import { playMinecraftClickSound } from '../../services/soundService';
+import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { searchModrinth } from '../../services/modrinthApi';
 import { ModrinthSearchResult } from '../../types/launcher';
 import { InstallTargetModal, InstallableItem } from '../common/InstallTargetModal';
+import { invokeInstallInstanceAddon, isTauriEnvironment } from '../../services/tauriBridge';
 
 interface PacksViewProps {
   activeInstance: MinecraftInstance | null;
@@ -102,12 +103,49 @@ export const PacksView: React.FC<PacksViewProps> = ({
     setIsInstallModalOpen(true);
   };
 
-  const handleConfirmInstall = (targetInstanceId: string, item: InstallableItem) => {
-    if (!instances.some((instance) => instance.id === targetInstanceId)) {
+  const handleConfirmInstall = async (targetInstanceId: string, item: InstallableItem) => {
+    const targetInst = instances.find((instance) => instance.id === targetInstanceId);
+    if (!targetInst) {
       setSearchError('Select an existing instance before installing.');
       return;
     }
-    setSearchError(`Could not install ${item.name}: no downloadable file was provided by the source.`);
+    setSearchError(null);
+    try {
+      let finalFileName = item.filename || `${item.id}.zip`;
+      if (isTauriEnvironment()) {
+        const res = await invokeInstallInstanceAddon({
+          instance_id: targetInst.id,
+          addon_id: String(item.id),
+          addon_name: item.name,
+          addon_type: item.type,
+          provider: (item.source as 'modrinth' | 'curseforge') || 'modrinth',
+          game_version: targetInst.gameVersion,
+          loader: targetInst.loader,
+          file_name: item.filename,
+        });
+        if (res.file_name) finalFileName = res.file_name;
+      }
+      if (onUpdateInstance) {
+        const newPack = {
+          id: String(item.id),
+          name: item.name,
+          filename: finalFileName,
+          type: item.type as 'resourcepack' | 'shader' | 'datapack',
+          enabled: true,
+          order: (targetInst.packs?.length || 0) + 1,
+          description: item.description,
+          iconUrl: item.iconUrl || undefined,
+          source: item.source || 'modrinth',
+        };
+        onUpdateInstance({
+          ...targetInst,
+          packs: [...(targetInst.packs || []), newPack],
+        });
+      }
+      playMinecraftLevelUpSound();
+    } catch (err) {
+      setSearchError(`Install failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Toggle pack enabled/disabled in active instance

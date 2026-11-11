@@ -776,6 +776,8 @@ export default function App() {
           desktopAvailable={isTauriEnvironment()}
           launchProgress={launchProgress}
           launchElapsedMs={launchElapsedMs}
+          settings={settings}
+          onUpdateSettings={setSettings}
           onLaunchGame={(instanceId) => handleLaunchGame(undefined, instanceId)}
           onStopGame={handleStopGame}
           onSelectInstance={setActiveInstanceId}
@@ -848,6 +850,7 @@ export default function App() {
                 setActiveInstanceId(inst.id);
                 setInspectingInstanceId(inst.id);
               }}
+              onUpdateInstance={handleUpdateInstance}
             />
           ) : null}
 

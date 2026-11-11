@@ -1,0 +1,8 @@
+{
+  "name": "Remix The Boys - Minecraft Launcher",
+  "description": "A next-generation Minecraft Java Edition launcher featuring offline profiles, Microsoft OAuth 2.0 authentication, Modrinth and CurseForge integrations, mod loader support, and advanced instance management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

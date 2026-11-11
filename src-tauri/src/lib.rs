@@ -1,6 +1,8 @@
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::Engine as _;
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -13,6 +15,8 @@ use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 mod minecraft;
@@ -1862,6 +1866,920 @@ fn delete_mod_file(instance_id: String, file_name: String) -> Result<bool, Strin
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstallAddonRequest {
+    pub instance_id: String,
+    pub addon_id: String,
+    pub addon_name: String,
+    pub addon_type: String, // "mod", "resourcepack", "shader", "datapack"
+    pub provider: String,   // "modrinth" or "curseforge"
+    pub game_version: Option<String>,
+    pub loader: Option<String>,
+    pub direct_download_url: Option<String>,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstallAddonResult {
+    pub success: bool,
+    pub file_name: String,
+    pub file_path: String,
+    pub size_bytes: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstanceAddonItem {
+    pub id: String,
+    pub file_name: String,
+    pub name: String,
+    pub addon_type: String,
+    pub enabled: bool,
+    pub size_bytes: u64,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LauncherUpdateInfo {
+    pub has_update: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_name: String,
+    pub release_notes: String,
+    pub download_url: Option<String>,
+    pub asset_name: Option<String>,
+}
+
+/// Downloads and installs an addon (mod, resource pack, shader pack, or data pack) directly into the instance
+#[tauri::command]
+async fn install_instance_addon(
+    request: InstallAddonRequest,
+) -> Result<InstallAddonResult, String> {
+    validate_instance_id(&request.instance_id)?;
+    let app_dir = get_app_data_dir()?;
+    let instance_dir = app_dir.join("instances").join(&request.instance_id);
+    if !instance_dir.is_dir() {
+        return Err(format!(
+            "Instance '{}' does not exist.",
+            request.instance_id
+        ));
+    }
+
+    let folder_name = match request.addon_type.to_ascii_lowercase().as_str() {
+        "resourcepack" | "resource_pack" | "resourcepacks" => "resourcepacks",
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shaderpacks",
+        "datapack" | "datapacks" | "data_pack" => "datapacks",
+        _ => "mods",
+    };
+    let target_dir = instance_dir.join(folder_name);
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Could not create folder {}: {e}", target_dir.display()))?;
+
+    let client = reqwest::Client::new();
+    let (download_url, final_file_name) = if let Some(direct_url) =
+        request.direct_download_url.filter(|u| !u.trim().is_empty())
+    {
+        let name = request.file_name.unwrap_or_else(|| {
+            direct_url
+                .rsplit('/')
+                .next()
+                .unwrap_or("addon.jar")
+                .to_string()
+        });
+        (direct_url, name)
+    } else if request.provider.eq_ignore_ascii_case("modrinth") {
+        let url = format!(
+            "https://api.modrinth.com/v2/project/{}/version",
+            request.addon_id
+        );
+        let resp = client
+            .get(&url)
+            .header(
+                "User-Agent",
+                "TheBoysLauncher/1.0.0 (https://github.com/ktesla39/TheBoyz)",
+            )
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch Modrinth project versions: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Modrinth version lookup returned HTTP {}.",
+                resp.status()
+            ));
+        }
+
+        let versions: Vec<serde_json::Value> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid Modrinth version list: {e}"))?;
+
+        if versions.is_empty() {
+            return Err("No downloadable versions found for this Modrinth addon.".to_string());
+        }
+
+        let req_loader = request.loader.as_deref().unwrap_or("").to_ascii_lowercase();
+        let req_gv = request.game_version.as_deref().unwrap_or("");
+
+        let chosen_version = versions
+            .iter()
+            .find(|v| {
+                let loaders = v.get("loaders").and_then(|l| l.as_array());
+                let game_versions = v.get("game_versions").and_then(|g| g.as_array());
+
+                let loader_ok = req_loader.is_empty()
+                    || req_loader == "vanilla"
+                    || loaders.map_or(true, |arr| {
+                        arr.iter().any(|item| {
+                            item.as_str()
+                                .map_or(false, |l| l.eq_ignore_ascii_case(&req_loader))
+                        })
+                    });
+
+                let gv_ok = req_gv.is_empty()
+                    || req_gv == "all"
+                    || game_versions.map_or(true, |arr| {
+                        arr.iter()
+                            .any(|item| item.as_str().map_or(false, |g| g == req_gv))
+                    });
+
+                loader_ok && gv_ok
+            })
+            .or_else(|| {
+                versions.iter().find(|v| {
+                    let loaders = v.get("loaders").and_then(|l| l.as_array());
+                    req_loader.is_empty()
+                        || req_loader == "vanilla"
+                        || loaders.map_or(true, |arr| {
+                            arr.iter().any(|item| {
+                                item.as_str()
+                                    .map_or(false, |l| l.eq_ignore_ascii_case(&req_loader))
+                            })
+                        })
+                })
+            })
+            .or_else(|| versions.first())
+            .ok_or_else(|| "No compatible versions available.".to_string())?;
+
+        let files = chosen_version
+            .get("files")
+            .and_then(|f| f.as_array())
+            .ok_or_else(|| "Selected version has no files.".to_string())?;
+        let primary_file = files
+            .iter()
+            .find(|f| f.get("primary").and_then(|p| p.as_bool()).unwrap_or(false))
+            .or_else(|| files.first())
+            .ok_or_else(|| "No downloadable file in selected version.".to_string())?;
+
+        let file_url = primary_file
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| "File object is missing download URL.".to_string())?
+            .to_string();
+        let file_name = primary_file
+            .get("filename")
+            .and_then(|f| f.as_str())
+            .unwrap_or("addon.jar")
+            .to_string();
+        (file_url, file_name)
+    } else if request.provider.eq_ignore_ascii_case("curseforge") {
+        let api_key = get_curseforge_api_key()?
+            .ok_or_else(|| "CurseForge API key is required to download from CurseForge. Save your key in Launcher Settings or use Modrinth.".to_string())?;
+
+        let url = format!(
+            "https://api.curseforge.com/v1/mods/{}/files",
+            request.addon_id
+        );
+        let resp = client
+            .get(&url)
+            .header("x-api-key", &api_key)
+            .send()
+            .await
+            .map_err(|e| format!("CurseForge file request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("CurseForge returned HTTP {}.", resp.status()));
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid CurseForge files response: {e}"))?;
+        let files = body
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| "No files found for this CurseForge addon.".to_string())?;
+
+        if files.is_empty() {
+            return Err("CurseForge reports no files for this addon.".to_string());
+        }
+
+        let req_gv = request.game_version.as_deref().unwrap_or("");
+        let chosen_file = files
+            .iter()
+            .find(|f| {
+                if req_gv.is_empty() || req_gv == "all" {
+                    return true;
+                }
+                f.get("gameVersions")
+                    .and_then(|gv| gv.as_array())
+                    .map_or(false, |arr| {
+                        arr.iter()
+                            .any(|item| item.as_str().map_or(false, |g| g == req_gv))
+                    })
+            })
+            .or_else(|| files.first())
+            .ok_or_else(|| "No compatible file found.".to_string())?;
+
+        let file_id = chosen_file
+            .get("id")
+            .and_then(|id| id.as_u64())
+            .ok_or_else(|| "File entry has no ID.".to_string())?;
+        let file_name = chosen_file
+            .get("fileName")
+            .and_then(|f| f.as_str())
+            .unwrap_or("addon.jar")
+            .to_string();
+
+        let direct_url = chosen_file
+            .get("downloadUrl")
+            .and_then(|u| u.as_str())
+            .map(str::to_string);
+        let final_url = match direct_url {
+            Some(u) if !u.trim().is_empty() => u,
+            _ => {
+                let dl_url = format!(
+                    "https://api.curseforge.com/v1/mods/{}/files/{}/download-url",
+                    request.addon_id, file_id
+                );
+                let dl_res = client
+                    .get(&dl_url)
+                    .header("x-api-key", &api_key)
+                    .send()
+                    .await
+                    .map_err(|e| format!("CurseForge download URL resolution failed: {e}"))?;
+                let dl_body: serde_json::Value = dl_res
+                    .json()
+                    .await
+                    .map_err(|e| format!("Invalid CurseForge download URL response: {e}"))?;
+                dl_body
+                    .get("data")
+                    .and_then(|d| d.as_str())
+                    .ok_or_else(|| "CurseForge did not return a valid download link.".to_string())?
+                    .to_string()
+            }
+        };
+        (final_url, file_name)
+    } else {
+        return Err(format!("Unsupported addon provider: {}", request.provider));
+    };
+
+    let download_resp = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download addon file: {e}"))?;
+
+    if !download_resp.status().is_success() {
+        return Err(format!(
+            "Addon download failed with HTTP status {}.",
+            download_resp.status()
+        ));
+    }
+
+    let bytes = download_resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read addon file bytes: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Downloaded addon file was empty.".to_string());
+    }
+
+    let clean_file_name =
+        final_file_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let safe_file_name = if clean_file_name.is_empty() {
+        format!(
+            "{}.{}",
+            request.addon_name.replace(' ', "_"),
+            if folder_name == "mods" { "jar" } else { "zip" }
+        )
+    } else {
+        clean_file_name
+    };
+
+    let target_path = target_dir.join(&safe_file_name);
+    fs::write(&target_path, &bytes).map_err(|e| {
+        format!(
+            "Failed to save addon file to {}: {e}",
+            target_path.display()
+        )
+    })?;
+
+    Ok(InstallAddonResult {
+        success: true,
+        file_name: safe_file_name.clone(),
+        file_path: target_path.to_string_lossy().to_string(),
+        size_bytes: bytes.len() as u64,
+        message: format!(
+            "Successfully installed '{}' into {} ({:.2} MB).",
+            safe_file_name,
+            folder_name,
+            bytes.len() as f64 / (1024.0 * 1024.0)
+        ),
+    })
+}
+
+/// Lists all addons (mods, resourcepacks, shaderpacks, datapacks) installed in an instance
+#[tauri::command]
+fn list_instance_addons(instance_id: String) -> Result<Vec<InstanceAddonItem>, String> {
+    validate_instance_id(&instance_id)?;
+    let instance_dir = get_app_data_dir()?.join("instances").join(&instance_id);
+    if !instance_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut items = Vec::new();
+    let folders = [
+        ("mods", "mod"),
+        ("resourcepacks", "resourcepack"),
+        ("shaderpacks", "shader"),
+        ("datapacks", "datapack"),
+    ];
+
+    for (folder, addon_type) in folders {
+        let dir = instance_dir.join(folder);
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let file_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let lower = file_name.to_lowercase();
+                let is_valid = match addon_type {
+                    "mod" => lower.ends_with(".jar") || lower.ends_with(".jar.disabled"),
+                    _ => lower.ends_with(".zip") || lower.ends_with(".zip.disabled"),
+                };
+                if !is_valid {
+                    continue;
+                }
+                let enabled = !lower.ends_with(".disabled");
+                let clean_name = file_name
+                    .replace(".jar.disabled", "")
+                    .replace(".jar", "")
+                    .replace(".zip.disabled", "")
+                    .replace(".zip", "");
+                let size_bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+
+                items.push(InstanceAddonItem {
+                    id: format!("{folder}_{file_name}"),
+                    file_name: file_name.clone(),
+                    name: clean_name,
+                    addon_type: addon_type.to_string(),
+                    enabled,
+                    size_bytes,
+                    path: path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(items)
+}
+
+/// Toggles an addon file (mod or pack) between enabled and disabled
+#[tauri::command]
+fn toggle_instance_addon(
+    instance_id: String,
+    addon_type: String,
+    file_name: String,
+    enable: bool,
+) -> Result<String, String> {
+    validate_instance_id(&instance_id)?;
+    let folder_name = match addon_type.to_ascii_lowercase().as_str() {
+        "resourcepack" | "resource_pack" | "resourcepacks" => "resourcepacks",
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shaderpacks",
+        "datapack" | "datapacks" | "data_pack" => "datapacks",
+        _ => "mods",
+    };
+    let dir = get_app_data_dir()?
+        .join("instances")
+        .join(&instance_id)
+        .join(folder_name);
+    let current_path = dir.join(&file_name);
+    if !current_path.exists() {
+        return Err(format!("Addon file '{}' does not exist.", file_name));
+    }
+
+    let new_name = if enable {
+        file_name.replace(".disabled", "")
+    } else {
+        if file_name.ends_with(".disabled") {
+            file_name.clone()
+        } else {
+            format!("{}.disabled", file_name)
+        }
+    };
+    let new_path = dir.join(&new_name);
+    fs::rename(current_path, new_path).map_err(|e| e.to_string())?;
+    Ok(new_name)
+}
+
+/// Deletes an addon file from an instance
+#[tauri::command]
+fn delete_instance_addon(
+    instance_id: String,
+    addon_type: String,
+    file_name: String,
+) -> Result<bool, String> {
+    validate_instance_id(&instance_id)?;
+    let folder_name = match addon_type.to_ascii_lowercase().as_str() {
+        "resourcepack" | "resource_pack" | "resourcepacks" => "resourcepacks",
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => "shaderpacks",
+        "datapack" | "datapacks" | "data_pack" => "datapacks",
+        _ => "mods",
+    };
+    let file_path = get_app_data_dir()?
+        .join("instances")
+        .join(&instance_id)
+        .join(folder_name)
+        .join(&file_name);
+    if file_path.exists() {
+        fs::remove_file(file_path).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Launches a local HTTP loopback server on 127.0.0.1, opens Microsoft OAuth in the browser, and completes authentication
+#[tauri::command]
+async fn login_with_microsoft_loopback(
+    client_id: Option<String>,
+    port: Option<u16>,
+) -> Result<serde_json::Value, String> {
+    let client_id = client_id
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(|| "fa5a840b-f490-4075-aaa9-83a6763c602e".to_string());
+
+    let preferred_port = port.unwrap_or(28420);
+    let listener = match TcpListener::bind(("127.0.0.1", preferred_port)).await {
+        Ok(l) => l,
+        Err(_) => match TcpListener::bind(("127.0.0.1", 28421)).await {
+            Ok(l) => l,
+            Err(_) => TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .map_err(|e| format!("Failed to bind local loopback port for OAuth: {e}"))?,
+        },
+    };
+
+    let bound_port = listener
+        .local_addr()
+        .map_err(|e| format!("Failed to read bound port: {e}"))?
+        .port();
+
+    let verifier_raw = format!("{}_{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let code_verifier = URL_SAFE_NO_PAD.encode(verifier_raw.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    let redirect_uri = format!("http://localhost:{bound_port}/callback");
+    let encoded_redirect_uri = format!("http%3A%2F%2Flocalhost%3A{}%2Fcallback", bound_port);
+    let auth_url = format!(
+        "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id={}&response_type=code&redirect_uri={}&response_mode=query&scope=XboxLive.signin%20offline_access&code_challenge={}&code_challenge_method=S256&prompt=select_account",
+        client_id, encoded_redirect_uri, code_challenge
+    );
+
+    // Open user's system default web browser
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("cmd");
+        suppress_console_window(&mut cmd);
+        let _ = cmd.args(["/C", "start", "", &auth_url]).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(&auth_url).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("xdg-open").arg(&auth_url).spawn();
+    }
+
+    // Wait for the browser redirect to localhost callback (3 minutes timeout)
+    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(180), listener.accept())
+        .await
+        .map_err(|_| "Microsoft sign-in timed out after 3 minutes. Please try again.")?
+        .map_err(|e| format!("Failed to accept incoming loopback connection: {e}"))?;
+
+    let mut buffer = [0u8; 4096];
+    let bytes_read = stream
+        .read(&mut buffer)
+        .await
+        .map_err(|e| format!("Failed to read OAuth response: {e}"))?;
+    let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+    let auth_code = request_str
+        .lines()
+        .next()
+        .and_then(|line| {
+            let path_query = line.split_whitespace().nth(1)?;
+            let query = path_query.split('?').nth(1)?;
+            for pair in query.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if k == "code" {
+                        return Some(v.to_string());
+                    }
+                }
+            }
+            None
+        })
+        .ok_or_else(|| {
+            if request_str.contains("error=access_denied") {
+                "Microsoft sign-in was cancelled by the user.".to_string()
+            } else {
+                "Could not extract authorization code from Microsoft redirect.".to_string()
+            }
+        })?;
+
+    // Respond to user's browser with a styled confirmation page
+    let html_body = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Authentication Successful — The Boys Launcher</title>
+  <style>
+    body { margin: 0; background: #0c0f17; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #151b27; border: 2px solid #2a344a; border-radius: 16px; padding: 40px; text-align: center; max-width: 440px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7); }
+    .icon { font-size: 54px; margin-bottom: 16px; }
+    h1 { font-size: 24px; color: #10b981; margin: 0 0 12px 0; font-weight: 800; }
+    p { color: #94a3b8; font-size: 15px; line-height: 1.5; margin: 0 0 24px 0; }
+    .badge { display: inline-block; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🎮</div>
+    <h1>Signed In Successfully!</h1>
+    <p>Your Microsoft account has been verified. You can now close this browser window and return to <strong>The Boys Launcher</strong>.</p>
+    <div class="badge">Safe to close this window</div>
+  </div>
+</body>
+</html>"#;
+    let response_bytes = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        html_body.len(),
+        html_body
+    );
+    let _ = stream.write_all(response_bytes.as_bytes()).await;
+    let _ = stream.flush().await;
+
+    // Exchange auth code for Microsoft OAuth access token
+    let http_client = reqwest::Client::new();
+    let token_res = http_client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .form(&[
+            ("client_id", client_id.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", auth_code.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("code_verifier", code_verifier.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Failed to exchange authorization code: {e}"))?;
+
+    let token_json: serde_json::Value = token_res
+        .json()
+        .await
+        .map_err(|e| format!("Invalid token response: {e}"))?;
+
+    let ms_access_token = token_json
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            let desc = token_json
+                .get("error_description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown token error");
+            format!("Microsoft token exchange error: {desc}")
+        })?;
+    let ms_refresh_token = token_json
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let expires_in = token_json
+        .get("expires_in")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(86400);
+
+    // Xbox Live authentication
+    let xbox_res = http_client
+        .post("https://user.auth.xboxlive.com/user/authenticate")
+        .json(&serde_json::json!({
+            "Properties": {
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": format!("d={ms_access_token}")
+            },
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT"
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Xbox Live authentication request failed: {e}"))?;
+
+    let xbox_json: serde_json::Value = xbox_res
+        .json()
+        .await
+        .map_err(|e| format!("Invalid Xbox Live response: {e}"))?;
+    let xbox_token = xbox_json
+        .get("Token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Xbox authentication did not return a token.".to_string())?;
+    let uhs = xbox_json
+        .get("DisplayClaims")
+        .and_then(|dc| dc.get("xui"))
+        .and_then(|xui| xui.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|first| first.get("uhs"))
+        .and_then(|uhs| uhs.as_str())
+        .ok_or_else(|| "Xbox authentication did not return a user hash.".to_string())?;
+
+    // XSTS authorization
+    let xsts_res = http_client
+        .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+        .json(&serde_json::json!({
+            "Properties": {
+                "SandboxId": "RETAIL",
+                "UserTokens": [xbox_token]
+            },
+            "RelyingParty": "http://xboxlive.com",
+            "TokenType": "JWT"
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("XSTS authentication request failed: {e}"))?;
+
+    let xsts_json: serde_json::Value = xsts_res
+        .json()
+        .await
+        .map_err(|e| format!("Invalid XSTS response: {e}"))?;
+    let xsts_token = xsts_json
+        .get("Token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            if let Some(err_code) = xsts_json.get("XErr").and_then(|v| v.as_u64()) {
+                match err_code {
+                    2148916233 => {
+                        "This Microsoft account has no Xbox account created yet.".to_string()
+                    }
+                    2148916238 => {
+                        "This account is a child account and requires parental consent.".to_string()
+                    }
+                    _ => format!("Xbox security authentication failed (code {err_code})."),
+                }
+            } else {
+                "Xbox security authentication failed.".to_string()
+            }
+        })?;
+
+    // Minecraft services login
+    let mc_auth_res = http_client
+        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+        .json(&serde_json::json!({
+            "identityToken": format!("XBL3.0 x={uhs};{xsts_token}")
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Minecraft login request failed: {e}"))?;
+
+    let mc_auth_json: serde_json::Value = mc_auth_res
+        .json()
+        .await
+        .map_err(|e| format!("Invalid Minecraft auth response: {e}"))?;
+    let mc_access_token = mc_auth_json
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Minecraft services authentication failed.".to_string())?;
+
+    // Minecraft profile lookup
+    let profile_res = http_client
+        .get("https://api.minecraftservices.com/minecraft/profile")
+        .bearer_auth(mc_access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Minecraft profile request failed: {e}"))?;
+
+    let profile_json: serde_json::Value = profile_res
+        .json()
+        .await
+        .map_err(|e| format!("Invalid Minecraft profile response: {e}"))?;
+    let profile_id = profile_json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            "Minecraft profile has no ID. Does this account own Minecraft Java Edition?".to_string()
+        })?;
+    let profile_name = profile_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Minecraft profile has no username.".to_string())?;
+
+    let skins = profile_json.get("skins").and_then(|v| v.as_array());
+    let skin_url = skins
+        .and_then(|arr| arr.first())
+        .and_then(|s| s.get("url"))
+        .and_then(|u| u.as_str());
+    let variant = skins
+        .and_then(|arr| arr.first())
+        .and_then(|s| s.get("variant"))
+        .and_then(|v| v.as_str());
+    let model = match variant {
+        Some("SLIM") => "slim",
+        _ => "classic",
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let expires_at = now_ms + (expires_in * 1000);
+
+    // Save tokens in OS keyring
+    let _ = save_microsoft_credentials(
+        profile_id.to_string(),
+        mc_access_token.to_string(),
+        ms_refresh_token.clone(),
+        expires_at,
+    );
+
+    Ok(serde_json::json!({
+        "id": profile_id,
+        "type": "microsoft",
+        "username": profile_name,
+        "uuid": profile_id,
+        "accessToken": mc_access_token,
+        "refreshToken": ms_refresh_token,
+        "expiresAt": expires_at,
+        "ownsGame": true,
+        "skinProvider": "mojang",
+        "skinUrl": skin_url,
+        "model": model,
+        "createdAt": now_ms,
+        "lastUsed": now_ms
+    }))
+}
+
+fn parse_semver_triplet(version: &str) -> (u32, u32, u32) {
+    let mut parts = version.trim().trim_start_matches('v').split('.');
+    let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let patch = parts
+        .next()
+        .and_then(|p| p.split('-').next())
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(0);
+    (major, minor, patch)
+}
+
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let l = parse_semver_triplet(latest);
+    let c = parse_semver_triplet(current);
+    l > c
+}
+
+/// Checks the official GitHub repository for new releases and returns update information
+#[tauri::command]
+async fn check_github_launcher_update() -> Result<LauncherUpdateInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let repo =
+        std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "ktesla39/TheBoyz".to_string());
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "TheBoysLauncher/1.0.0 (ktesla36@gmail.com)")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to check GitHub releases: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Ok(LauncherUpdateInfo {
+            has_update: false,
+            current_version: current_version.clone(),
+            latest_version: current_version,
+            release_name: "The Boys Launcher".to_string(),
+            release_notes: "No newer releases available on GitHub.".to_string(),
+            download_url: None,
+            asset_name: None,
+        });
+    }
+
+    let release: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid release metadata: {e}"))?;
+    let tag = release
+        .get("tag_name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .trim_start_matches('v');
+    let release_name = release
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("The Boys Launcher")
+        .to_string();
+    let release_notes = release
+        .get("body")
+        .and_then(|b| b.as_str())
+        .unwrap_or("Bug fixes and performance improvements.")
+        .to_string();
+
+    let assets = release.get("assets").and_then(|a| a.as_array());
+    let (download_url, asset_name) = assets
+        .and_then(|list| {
+            list.iter().find_map(|asset| {
+                let name = asset.get("name").and_then(|n| n.as_str())?;
+                if name.ends_with(".exe") || name.ends_with(".msi") {
+                    let url = asset
+                        .get("browser_download_url")
+                        .and_then(|u| u.as_str())?
+                        .to_string();
+                    Some((url, name.to_string()))
+                } else {
+                    None
+                }
+            })
+        })
+        .map_or((None, None), |(u, n)| (Some(u), Some(n)));
+
+    let has_update = is_newer_version(tag, &current_version);
+
+    Ok(LauncherUpdateInfo {
+        has_update,
+        current_version,
+        latest_version: tag.to_string(),
+        release_name,
+        release_notes,
+        download_url,
+        asset_name,
+    })
+}
+
+/// Downloads and launches the in-place NSIS installer from GitHub releases without wiping user data
+#[tauri::command]
+async fn apply_github_launcher_update(download_url: String) -> Result<bool, String> {
+    if !download_url.starts_with("https://") {
+        return Err("Invalid download URL.".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&download_url)
+        .header("User-Agent", "TheBoysLauncher/1.0.0")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download update installer: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed with HTTP {}.", resp.status()));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read update installer bytes: {e}"))?;
+    let temp_dir = std::env::temp_dir();
+    let target_path = temp_dir.join("the-boys-launcher-setup-update.exe");
+    fs::write(&target_path, &bytes)
+        .map_err(|e| format!("Failed to write installer to temp: {e}"))?;
+
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new(&target_path);
+        suppress_console_window(&mut cmd);
+        cmd.arg("/S"); // NSIS silent/passive update in place
+        cmd.spawn()
+            .map_err(|e| format!("Failed to launch updater: {e}"))?;
+        std::process::exit(0);
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod minecraft_status_tests {
     use super::{decode_protocol_varint, description_text, write_protocol_varint};
@@ -2067,7 +2985,14 @@ pub fn run() {
             clone_instance,
             list_instance_mods,
             toggle_mod_file,
-            delete_mod_file
+            delete_mod_file,
+            install_instance_addon,
+            list_instance_addons,
+            toggle_instance_addon,
+            delete_instance_addon,
+            login_with_microsoft_loopback,
+            check_github_launcher_update,
+            apply_github_launcher_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running The Boys launcher application");

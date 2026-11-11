@@ -49,6 +49,9 @@ import {
   DragonEggIcon,
   TridentIcon,
   MinecraftShieldIcon,
+  NetherStarIcon,
+  EnderPearlIcon,
+  ElytraWingsIcon,
   RamChipIcon,
   OpenGlApiIcon,
 } from '../icons/MinecraftIcons';
@@ -65,28 +68,27 @@ interface SettingsViewProps {
   onUpdateSettings: (newSettings: LauncherSettings) => void;
 }
 
-const TheBoysLogoIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
-  <img src="/logo.png" alt="The Boys Official Logo" className={`${className} object-contain rounded`} />
-);
-
 const LAUNCHER_ICON_PRESETS = [
-  { id: 'default', label: 'The Boys Crest', icon: TheBoysLogoIcon },
-  { id: 'diamond_sword', label: 'Diamond Sword', icon: DiamondSwordIcon },
-  { id: 'pickaxe', label: 'Diamond Pickaxe', icon: PickaxeIcon },
-  { id: 'netherite_ingot', label: 'Netherite Ingot', icon: NetheriteIngotIcon },
-  { id: 'ender_eye', label: 'Eye of Ender', icon: EnderEyeIcon },
-  { id: 'grass_block', label: 'Grass Block', icon: GrassBlockIcon },
-  { id: 'crafting_table', label: 'Crafting Table', icon: CraftingTableIcon },
-  { id: 'creeper_face', label: 'Creeper Face', icon: CreeperFaceIcon },
-  { id: 'redstone_dust', label: 'Redstone Dust', icon: RedstoneDustIcon },
-  { id: 'golden_apple', label: 'Golden Apple', icon: GoldenAppleIcon },
-  { id: 'enchanted_book', label: 'Enchanted Book', icon: EnchantedBookIcon },
-  { id: 'beacon', label: 'Nether Beacon', icon: BeaconIcon },
-  { id: 'totem', label: 'Totem of Undying', icon: TotemIcon },
-  { id: 'potion', label: 'Potion Bottle', icon: PotionBottleIcon },
-  { id: 'dragon_egg', label: 'Dragon Egg', icon: DragonEggIcon },
-  { id: 'trident', label: 'Trident', icon: TridentIcon },
-  { id: 'shield', label: 'Knight Shield', icon: MinecraftShieldIcon },
+  { id: 'default', label: 'The Boys Crest', icon: TheBoysEmblemIcon, tag: 'Official' },
+  { id: 'nether_star', label: 'Nether Star', icon: NetherStarIcon, tag: 'Mythic' },
+  { id: 'diamond_sword', label: 'Diamond Sword', icon: DiamondSwordIcon, tag: 'Weapon' },
+  { id: 'pickaxe', label: 'Diamond Pickaxe', icon: PickaxeIcon, tag: 'Tool' },
+  { id: 'netherite_ingot', label: 'Netherite Ingot', icon: NetheriteIngotIcon, tag: 'Rare' },
+  { id: 'ender_eye', label: 'Eye of Ender', icon: EnderEyeIcon, tag: 'Portal' },
+  { id: 'ender_pearl', label: 'Ender Pearl', icon: EnderPearlIcon, tag: 'Relic' },
+  { id: 'elytra', label: 'Elytra Wings', icon: ElytraWingsIcon, tag: 'Flight' },
+  { id: 'grass_block', label: 'Grass Block', icon: GrassBlockIcon, tag: 'Classic' },
+  { id: 'crafting_table', label: 'Crafting Table', icon: CraftingTableIcon, tag: 'Utility' },
+  { id: 'creeper_face', label: 'Creeper Face', icon: CreeperFaceIcon, tag: 'Mob' },
+  { id: 'golden_apple', label: 'Golden Apple', icon: GoldenAppleIcon, tag: 'Treasure' },
+  { id: 'enchanted_book', label: 'Enchanted Book', icon: EnchantedBookIcon, tag: 'Arcane' },
+  { id: 'beacon', label: 'Nether Beacon', icon: BeaconIcon, tag: 'Power' },
+  { id: 'totem', label: 'Totem of Undying', icon: TotemIcon, tag: 'Immortal' },
+  { id: 'potion', label: 'Potion Bottle', icon: PotionBottleIcon, tag: 'Alchemy' },
+  { id: 'dragon_egg', label: 'Dragon Egg', icon: DragonEggIcon, tag: 'Trophy' },
+  { id: 'trident', label: 'Trident', icon: TridentIcon, tag: 'Aquatic' },
+  { id: 'redstone_dust', label: 'Redstone Dust', icon: RedstoneDustIcon, tag: 'Circuit' },
+  { id: 'shield', label: 'Knight Shield', icon: MinecraftShieldIcon, tag: 'Armor' },
 ];
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -264,13 +266,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={handleSave}
-          className="btn-mc btn-mc-green flex items-center justify-center gap-2 px-6 py-2.5 text-white font-black text-xs rounded cursor-pointer font-display shadow-lg shrink-0"
-        >
-          <CheckCircle className="w-4 h-4 shrink-0" />
-          <span>{saved ? 'Preferences Saved!' : 'Save Preferences'}</span>
-        </button>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono font-bold text-emerald-400 shrink-0">
+          <CheckCircle className="w-3.5 h-3.5" />
+          <span>Auto-saved live</span>
+        </div>
       </div>
 
       <div className="card-obsidian p-5 sm:p-6 rounded-2xl space-y-3">
@@ -315,7 +314,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>Launcher Brand Icon &amp; Crest</span>
             </h3>
             <p className="text-xs text-slate-400 font-mono">
-              Choose your personal launcher icon preset, upload an image file of your own, or paste any custom icon URL.
+              Personalize the official client logo shown in the sidebar header and desktop presence.
             </p>
           </div>
 
@@ -331,8 +330,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </label>
         </div>
 
+        {/* Active Icon Showcase Badge */}
+        <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500/20 to-black/70 border-2 border-emerald-500/40 flex items-center justify-center shrink-0 shadow-md">
+              {localSettings.launcherIcon && (localSettings.launcherIcon.startsWith('data:') || localSettings.launcherIcon.startsWith('http')) ? (
+                <img
+                  src={localSettings.launcherIcon}
+                  alt="Active Brand Icon"
+                  className="w-8 h-8 rounded object-cover"
+                />
+              ) : (() => {
+                const activePreset = LAUNCHER_ICON_PRESETS.find((p) => p.id === localSettings.launcherIcon) || LAUNCHER_ICON_PRESETS[0];
+                const ActiveIcon = activePreset.icon;
+                return <ActiveIcon className="w-7 h-7" />;
+              })()}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white font-display">
+                  {localSettings.launcherIcon && (localSettings.launcherIcon.startsWith('data:') || localSettings.launcherIcon.startsWith('http'))
+                    ? 'Custom Uploaded Brand Icon'
+                    : (LAUNCHER_ICON_PRESETS.find((p) => p.id === localSettings.launcherIcon)?.label || 'The Boys Crest')}
+                </span>
+                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  ACTIVE
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">
+                Displayed dynamically on the sidebar crest, titlebar, and launcher headers.
+              </p>
+            </div>
+          </div>
+
+          {localSettings.launcherIcon && localSettings.launcherIcon !== 'default' && (
+            <button
+              type="button"
+              onClick={() => handleLauncherIconSelect('default')}
+              className="btn-mc px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded cursor-pointer shrink-0 font-display"
+            >
+              Reset to Default
+            </button>
+          )}
+        </div>
+
         {/* Preset Icons Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-9 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-5 gap-2.5">
           {LAUNCHER_ICON_PRESETS.map((preset) => {
             const Icon = preset.icon;
             const isSelected =
@@ -343,18 +386,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 key={preset.id}
                 type="button"
                 onClick={() => handleLauncherIconSelect(preset.id)}
-                className={`btn-mc p-2.5 rounded-xl flex flex-col items-center justify-center gap-2 transition-all cursor-pointer min-w-0 ${isSelected
-                  ? 'btn-mc-green text-white ring-2 ring-[var(--mc-accent)] shadow-md'
-                  : 'text-slate-300 hover:text-white'
-                  }`}
+                className={`btn-mc p-2.5 rounded-xl flex items-center gap-3 transition-all cursor-pointer min-w-0 text-left ${
+                  isSelected
+                    ? 'btn-mc-green text-white ring-2 ring-[var(--mc-accent)] shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
                 title={preset.label}
               >
                 <div className="w-8 h-8 rounded-lg bg-black/40 border border-white/10 flex items-center justify-center text-[var(--mc-accent)] shrink-0">
                   <Icon className="w-5 h-5" />
                 </div>
-                <span className="text-[10px] font-mono font-bold truncate max-w-full text-center">
-                  {preset.label}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-display font-bold truncate">
+                    {preset.label}
+                  </div>
+                  <span className="text-[9px] font-mono opacity-70 uppercase block truncate">
+                    {preset.tag}
+                  </span>
+                </div>
               </button>
             );
           })}
@@ -384,68 +433,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
           </div>
         </form>
-
-        {/* Custom Uploaded Icon Preview */}
-        {localSettings.launcherIcon &&
-          (localSettings.launcherIcon.startsWith('data:') ||
-            localSettings.launcherIcon.startsWith('http')) && (
-            <div className="p-3 bg-[var(--mc-badge-bg)] border border-[var(--mc-accent)]/30 rounded-xl flex items-center justify-between gap-3 min-w-0">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <img
-                  src={localSettings.launcherIcon}
-                  alt="Custom uploaded launcher icon"
-                  className="w-9 h-9 rounded-lg object-cover border border-white/20 shadow-md shrink-0"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-white font-display truncate">
-                    Custom Brand Icon Active
-                  </div>
-                  <div className="text-[10px] text-[var(--mc-accent)] font-mono truncate">
-                    Rendered live across the sidebar crest and application window
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleLauncherIconSelect('default')}
-                className="btn-mc px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded cursor-pointer shrink-0"
-              >
-                Reset to Default
-              </button>
-            </div>
-          )}
       </div>
 
-      {/* 2. Tactile Button Colors & Aesthetic Theme Customizer */}
+      {/* 2. Bedrock Tactile Control Palette Studio */}
       <div className="card-obsidian p-5 sm:p-6 rounded-2xl space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="space-y-0.5 min-w-0">
             <h3 className="text-sm font-black text-white font-display flex items-center gap-2">
               <Palette className="w-4 h-4 text-[var(--mc-accent)] shrink-0" />
-              <span>Aesthetic Tactile Button Colors</span>
+              <span>Bedrock Tactile Control Palette Studio</span>
             </h3>
             <p className="text-xs text-slate-400 font-mono">
-              Transforms the global 3D highlights, bevels, and active tactile depression of all buttons launcher-wide.
+              Customize the primary play button materials, 3D highlights, tactile depth bevels, and accent hues client-wide.
             </p>
           </div>
           <span className="text-[10px] font-mono text-[var(--mc-accent)] bg-[var(--mc-badge-bg)] px-2.5 py-0.5 rounded border border-[var(--mc-accent)]/20 font-bold shrink-0 self-start sm:self-auto">
-            Dynamic Bevel Engine
+            Bedrock Bevel Engine
           </span>
         </div>
 
         {/* Button Color Preset Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-5 lg:grid-cols-10 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-5 lg:grid-cols-5 gap-2.5">
           {[
-            { id: 'emerald', name: 'Emerald', hex: '#2e7d32', highlight: '#70e050', text: 'Classic MC' },
-            { id: 'diamond', name: 'Diamond', hex: '#0284c7', highlight: '#7dd3fc', text: 'Glacial Cyan' },
-            { id: 'redstone', name: 'Redstone', hex: '#b71c1c', highlight: '#f87171', text: 'Crimson' },
+            { id: 'emerald', name: 'Emerald Block', hex: '#2e7d32', highlight: '#70e050', text: 'Classic MC' },
+            { id: 'diamond', name: 'Diamond Crystal', hex: '#0284c7', highlight: '#7dd3fc', text: 'Glacial Cyan' },
+            { id: 'redstone', name: 'Redstone Core', hex: '#b71c1c', highlight: '#f87171', text: 'Industrial Crimson' },
             { id: 'amber', name: 'Nether Gold', hex: '#b45309', highlight: '#fde68a', text: 'Blaze Amber' },
-            { id: 'purple', name: 'Ender Void', hex: '#7e22ce', highlight: '#d8b4fe', text: 'Amethyst' },
-            { id: 'copper', name: 'Raw Copper', hex: '#c2410c', highlight: '#fdba74', text: 'Rust Orange' },
-            { id: 'lapis', name: 'Lapis Lazuli', hex: '#1d4ed8', highlight: '#93c5fd', text: 'Royal Blue' },
-            { id: 'obsidian', name: 'Obsidian', hex: '#27272a', highlight: '#71717a', text: 'Stealth' },
-            { id: 'netherite', name: 'Netherite', hex: '#332c38', highlight: '#695c74', text: 'Dark Ingot' },
-            { id: 'prismarine', name: 'Prismarine', hex: '#0f766e', highlight: '#5eead4', text: 'Teal Monument' },
+            { id: 'purple', name: 'Ender Amethyst', hex: '#7e22ce', highlight: '#d8b4fe', text: 'Void Purple' },
+            { id: 'copper', name: 'Raw Copper', hex: '#c2410c', highlight: '#fdba74', text: 'Oxidized Rust' },
+            { id: 'lapis', name: 'Lapis Lazuli', hex: '#1d4ed8', highlight: '#93c5fd', text: 'Arcane Royal' },
+            { id: 'obsidian', name: 'Deepslate Carbon', hex: '#27272a', highlight: '#71717a', text: 'Stealth Stone' },
+            { id: 'netherite', name: 'Netherite Steel', hex: '#332c38', highlight: '#695c74', text: 'Dark Ingot' },
+            { id: 'prismarine', name: 'Prismarine Shimmer', hex: '#0f766e', highlight: '#5eead4', text: 'Ocean Teal' },
           ].map((btn) => {
             const isSelected = currentBtnTheme === btn.id;
             return (
@@ -453,11 +472,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 key={btn.id}
                 type="button"
                 onClick={() => handleButtonColorSelect(btn.id)}
-                className={`p-2.5 rounded-xl border text-left flex flex-col justify-between gap-2.5 transition-all cursor-pointer shadow-md min-w-0 ${isSelected
-                  ? 'ring-2 ring-white border-white scale-[1.02]'
-                  : 'border-white/10 hover:border-white/20'
-                  }`}
-                style={{ backgroundColor: btn.hex }}
+                className={`btn-mc p-3 rounded-lg text-left flex flex-col justify-between gap-3 transition-all cursor-pointer min-w-0 ${
+                  isSelected
+                    ? 'ring-2 ring-white border-white scale-[1.02] shadow-[0_6px_16px_rgba(0,0,0,0.6)]'
+                    : 'hover:brightness-110 shadow-md'
+                }`}
+                style={{
+                  backgroundColor: btn.hex,
+                  borderColor: isSelected ? '#ffffff' : '#101216',
+                  boxShadow: isSelected
+                    ? `inset 2px 2px 0px ${btn.highlight}, inset -2px -2px 0px rgba(0,0,0,0.7), 0 0 12px ${btn.hex}`
+                    : `inset 2px 2px 0px ${btn.highlight}88, inset -2px -2px 0px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.4)`,
+                }}
               >
                 <div className="flex items-center justify-between w-full">
                   <span
@@ -470,7 +496,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div className="text-xs font-black text-white font-display leading-tight truncate">
                     {btn.name}
                   </div>
-                  <div className="text-[9px] text-white/80 font-mono mt-0.5 truncate">
+                  <div className="text-[10px] text-white/80 font-mono mt-0.5 truncate">
                     {btn.text}
                   </div>
                 </div>
@@ -479,12 +505,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           })}
         </div>
 
-        {/* Custom Button Color Wheel & Input */}
+        {/* Custom Button Color Swatch & Hex */}
         <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-xs font-bold text-white font-display block">
-                Custom Color Picker (Any Hex Value)
+                Custom Palette Color (Any Hex Value)
               </span>
               <p className="text-[11px] text-slate-400 font-mono mt-0.5">
                 Automatically computes high-contrast 3D highlights, shadows, and hover transitions.
@@ -507,11 +533,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
-        {/* Live Interactive Button Preview Box */}
-        <div className="p-4 rounded-xl bg-black/50 border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        {/* Live Functional Control Preview Studio */}
+        <div className="p-4 rounded-xl bg-black/50 border border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1 min-w-0">
             <span className="text-[10px] font-mono uppercase text-[var(--mc-accent)] font-extrabold tracking-wider">
-              Live Tactile Button Preview
+              Functional Control Preview Bench
             </span>
             <div className="text-xs text-slate-200 font-mono truncate">
               Active Style: <strong className="text-white uppercase">{currentBtnTheme}</strong> ({localSettings.customButtonColor || '#2e7d32'})
@@ -522,10 +548,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <button
               type="button"
               onClick={() => playMinecraftClickSound()}
-              className="btn-mc btn-mc-green flex items-center gap-2 px-6 py-2.5 text-white font-black text-xs rounded cursor-pointer font-display shadow-lg"
+              className="btn-mc btn-mc-green flex items-center gap-2 px-5 py-2 text-white font-black text-xs rounded cursor-pointer font-display shadow-lg"
+              title="Click to test sound and tactile depression"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>TEST PLAY BUTTON</span>
+              <span>LAUNCH MINECRAFT</span>
             </button>
 
             <button
@@ -533,24 +560,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onClick={() => playMinecraftClickSound()}
               className="btn-mc px-3.5 py-2 text-xs font-bold text-slate-200 hover:text-white rounded cursor-pointer font-display"
             >
-              Secondary Stone
+              Configure Mods
             </button>
 
-            <button
-              type="button"
-              onClick={() => playMinecraftClickSound()}
-              className="btn-mc btn-mc-diamond px-3.5 py-2 text-xs font-bold text-white rounded cursor-pointer font-display"
-            >
-              Diamond Accent
-            </button>
-
-            <button
-              type="button"
-              onClick={() => playMinecraftClickSound()}
-              className="btn-mc btn-mc-red px-3 py-2 text-xs font-bold text-white rounded cursor-pointer font-display"
-            >
-              Danger Stop
-            </button>
+            <span className="px-2.5 py-1 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              MC 1.21.4 · FABRIC
+            </span>
           </div>
         </div>
       </div>

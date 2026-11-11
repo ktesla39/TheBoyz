@@ -47,6 +47,7 @@ import {
   PickaxeIcon,
   NetheriteIngotIcon,
 } from '../icons/MinecraftIcons';
+import { InstanceCircleLogo } from './InstanceCircleLogo';
 
 interface InstanceDetailViewProps {
   instance: MinecraftInstance;
@@ -251,9 +252,11 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
           </button>
 
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0 shadow-sm">
-              <GrassBlockIcon className="w-7 h-7" />
-            </div>
+            <InstanceCircleLogo
+              loader={instance.loader}
+              icon={instance.icon}
+              size="lg"
+            />
             <div>
               <div className="flex items-center gap-2.5">
                 <h1 className="text-2xl font-black text-white font-display tracking-tight">

@@ -36,14 +36,11 @@ This is the first end-to-end implementation and is **not yet release-certified**
 - **Isolated Environments**: Each instance runs with its own isolated directory structure (`mods`, `resourcepacks`, `shaderpacks`, `saves`, `configs`).
 - **Fine-grained JVM Controls**: Memory heap allocation sliders (Min/Max RAM), custom JVM arguments, and automated GC tuning presets (Aikar's G1GC, Shenandoah, and Low-RAM Potato Mode).
 - **1-Click Cloning & Desktop Shortcuts**: Instant instance duplication and automated Windows `.bat`/`.lnk` desktop shortcut generation.
-- **Launcher Imports**: Copy saves, mods, configs, resource packs, shaders, and server settings from SKLauncher 4 and compatible Minecraft game directories without changing the source.
-- **Launch Progress & Timing**: Follow install/download progress and see how long each launch takes to start its Java process.
-- **After-Launch Actions**: Keep the launcher open, minimize it, hide it to the system tray, or close it after Minecraft starts.
 
 ### 🌐 Multiplayer Server Monitor & Direct Connect
 - **Real-Time TCP Server List Ping (SLP)**: Native Minecraft handshake protocol pinging servers directly over TCP to measure latency, player counts, and server status.
 - **MOTD Formatting Decoder**: Decodes legacy and modern Minecraft color formatting codes (`§a`, `§c`, `§e`, `§b`, etc.) into authentic styled spans.
-- **1-Click Direct Connect Boot Target**: On Minecraft 1.20.5 and newer, the launcher uses Quick Play to connect to the selected server as the game starts.
+- **1-Click Direct Connect Boot Target**: The launcher boots your designated **Boot Instance** and passes `--server <address>`, launching straight into your favorite realm without touching menus.
 - **In-Monitor Instance Management**: Manage mods, memory, and settings for the boot instance directly from the Server Monitor view.
 
 ### 🎨 Authentic Minecraft GUI Aesthetic Studio
@@ -94,7 +91,7 @@ TheBoyz/
 │   └── index.css                 # Obsidian textures, tactile buttons, styles
 ├── src-tauri/                    # Native Rust Tauri 2.0 backend
 │   ├── src/
-│   │   ├── lib.rs                # Native Tauri IPC commands and instance import
+│   │   ├── lib.rs                # 17 native Tauri IPC command handlers
 │   │   └── main.rs               # Application entry point
 │   ├── Cargo.toml                # Rust crate dependencies
 │   ├── tauri.conf.json           # Tauri window, security & bundle config
@@ -109,7 +106,7 @@ TheBoyz/
 
 ## 🛠️ Tauri Rust Command API
 
-The Rust backend exposes 27 commands via Tauri's IPC bridge:
+The Rust backend exposes 18 commands via Tauri's IPC bridge:
 
 | Command | Description |
 | :--- | :--- |
@@ -117,22 +114,13 @@ The Rust backend exposes 27 commands via Tauri's IPC bridge:
 | `detect_java_installations` | Scans system directories and discovers Java 8, 17, and 21 installations. |
 | `validate_java_path` | Verifies whether a designated Java executable exists and functions. |
 | `install_minecraft_instance` | Downloads/verifies Mojang client, library, native, asset, and logging files; installs the requested loader profile. |
-| `import_minecraft_instance` | Copies supported game data from another launcher into a new managed instance. |
 | `launch_game` | Builds the classpath and launcher arguments from the installed version profile, then starts Java in the instance directory. |
 | `stop_game` | Terminates a running Minecraft process by PID. |
 | `is_game_running` | Checks whether a specific game process is currently active. |
 | `ping_minecraft_server` | Performs a real TCP socket handshake to fetch MOTD, latency, and online player counts. |
-| `search_curseforge` | Searches CurseForge for compatible Minecraft projects. |
-| `get_curseforge_key_status` | Checks whether a CurseForge API key is configured in the system credential store. |
-| `save_curseforge_api_key` | Saves a CurseForge API key in the system credential store. |
-| `clear_curseforge_api_key` | Removes the saved CurseForge API key. |
 | `create_desktop_shortcut` | Generates a 1-click desktop launch shortcut file. |
 | `save_skin_file` | Caches base64-encoded skin PNGs into the local application skins directory. |
 | `fetch_ely_by_skin` | Queries Ely.by texture repositories for offline player skins and cloaks. |
-| `save_microsoft_credentials` | Saves Microsoft sign-in credentials in the system credential store. |
-| `get_microsoft_credentials` | Reads saved Microsoft sign-in credentials from the system credential store. |
-| `clear_microsoft_credentials` | Removes saved Microsoft sign-in credentials. |
-| `verify_file_hash` | Calculates SHA-1 and SHA-256 hashes for a file. |
 | `list_instances` | Reads all stored instances from the filesystem. |
 | `create_instance` | Scaffold an isolated instance directory tree (`mods`, `packs`, `saves`). |
 | `delete_instance` | Removes an instance directory and associated files. |
@@ -188,7 +176,7 @@ npm run dev
 npm run build
 ```
 
-Set `VITE_GITHUB_REPOSITORY=ktesla39/TheBoyz` in the root `.env` to enable the website's download button. It checks published GitHub releases (including prereleases), finds the newest Windows `.exe` installer, and links directly to that asset instead of opening the GitHub release page.
+Set `VITE_GITHUB_REPOSITORY=ktesla39/the-boyz` in the root `.env` to enable the website's download button. It checks published GitHub releases (including prereleases), finds the newest Windows `.exe` installer, and links directly to that asset instead of opening the GitHub release page.
 
 ### Signed automatic updates and GitHub Releases
 The launcher checks the latest GitHub Release in the desktop app and offers the update before installing it. Releases are built for Windows by `.github/workflows/release.yml`; push a version tag such as `v1.0.1` to publish a signed NSIS installer and the updater's `latest.json`.
@@ -202,10 +190,12 @@ npm run tauri -- signer generate --write-keys "$env:USERPROFILE\.tauri\the-boys-
 
 Add the generated **public** key to repository Settings → Secrets and variables → Actions → Variables as `TAURI_UPDATER_PUBLIC_KEY`. Add the private-key file contents and the password chosen during generation as Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never commit the private key or put it in `.env`, frontend variables, or website code. The release workflow validates these values and writes the tagged version and signed updater endpoint into the build configuration before packaging.
 
-The website's download lookup uses the public `VITE_GITHUB_REPOSITORY` variable and GitHub's public releases API. Local updater checks remain disabled until a signed release configuration is prepared. The root `.env.example` contains only public/local-development settings and does not contain signing credentials.
+The website's download lookup uses the public `VITE_GITHUB_REPOSITORY` variable and GitHub's public releases API. The root `.env.example` contains only public/local-development settings and does not contain signing credentials.
 
 ---
 
 ## 📜 License
 Built with passion by **The Boys Development Team**.
 Licensed under the [MIT License](LICENSE).
+#   T h e B o y z  
+ 

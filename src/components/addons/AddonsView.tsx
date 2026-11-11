@@ -27,9 +27,10 @@ import { CurseForgeSearchResult, ModrinthSearchResult } from '../../types/launch
 import {
   invokeCurseForgeKeyStatus,
   invokeSearchCurseForge,
+  invokeInstallInstanceAddon,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
-import { playMinecraftClickSound } from '../../services/soundService';
+import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { AddonDetailModal, UnifiedAddonItem } from './AddonDetailModal';
 import { AddonInstallModal } from './AddonInstallModal';
 import {
@@ -276,7 +277,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   };
 
   // Confirm Install into chosen instance
-  const handleConfirmInstall = (
+  const handleConfirmInstall = async (
     chosenInstanceId: string,
     addon: UnifiedAddonItem
   ) => {
@@ -285,7 +286,55 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       showNotification('Select an existing instance before installing.');
       return;
     }
-    showNotification(`Could not install ${addon.name}: no downloadable file was provided by the source.`);
+    showNotification(`Downloading ${addon.name}...`);
+    try {
+      let finalFileName = `${addon.slug || String(addon.id)}.${['resourcepack', 'shader', 'datapack'].includes(addon.type) ? 'zip' : 'jar'}`;
+      if (isTauriEnvironment()) {
+        const res = await invokeInstallInstanceAddon({
+          instance_id: inst.id,
+          addon_id: String(addon.id),
+          addon_name: addon.name,
+          addon_type: addon.type,
+          provider: addon.source === 'curseforge' ? 'curseforge' : 'modrinth',
+          game_version: inst.gameVersion,
+          loader: inst.loader,
+        });
+        if (res.file_name) finalFileName = res.file_name;
+      }
+      const isPack = ['resourcepack', 'shader', 'datapack'].includes(addon.type);
+      if (isPack) {
+        const newPack: InstalledPack = {
+          id: String(addon.id),
+          name: addon.name,
+          filename: finalFileName,
+          type: addon.type as 'resourcepack' | 'shader' | 'datapack',
+          enabled: true,
+          order: inst.packs.length + 1,
+          description: addon.summary,
+          iconUrl: addon.iconUrl || undefined,
+          source: addon.source,
+        };
+        onUpdateInstance({ ...inst, packs: [...inst.packs, newPack] });
+      } else {
+        const newMod: InstalledMod = {
+          id: String(addon.id),
+          name: addon.name,
+          filename: finalFileName,
+          version: 'Latest',
+          enabled: true,
+          author: addon.author,
+          description: addon.summary,
+          iconUrl: addon.iconUrl || undefined,
+          source: addon.source,
+          modrinthId: addon.source === 'modrinth' ? String(addon.id) : undefined,
+        };
+        onUpdateInstance({ ...inst, mods: [...inst.mods, newMod] });
+      }
+      playMinecraftLevelUpSound();
+      showNotification(`Installed ${addon.name} to ${inst.name}!`);
+    } catch (err) {
+      showNotification(`Failed to install ${addon.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Create new instance and install
@@ -293,7 +342,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
     _newInstanceData: { name: string; gameVersion: string; loader: ModLoaderType },
     addon: UnifiedAddonItem
   ) => {
-    showNotification(`Could not install ${addon.name}: no downloadable file was provided by the source.`);
+    showNotification(`To install ${addon.name}, select an existing instance or create one from the Instances tab.`);
   };
 
   // Toggle mod in inventory

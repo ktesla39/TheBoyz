@@ -102,12 +102,10 @@ export function validateUsername(username: string): { valid: boolean; error?: st
   return { valid: true };
 }
 
-const MS_CLIENT_ID = import.meta.env.VITE_MICROSOFT_CLIENT_ID?.trim();
+export const DEFAULT_MICROSOFT_CLIENT_ID = 'fa5a840b-f490-4075-aaa9-83a6763c602e';
+const MS_CLIENT_ID = import.meta.env.VITE_MICROSOFT_CLIENT_ID?.trim() || DEFAULT_MICROSOFT_CLIENT_ID;
 
-function requireMicrosoftClientId(): string {
-  if (!MS_CLIENT_ID) {
-    throw new Error('Microsoft sign-in is not configured. Set VITE_MICROSOFT_CLIENT_ID before building the launcher.');
-  }
+export function requireMicrosoftClientId(): string {
   return MS_CLIENT_ID;
 }
 

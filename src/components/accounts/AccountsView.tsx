@@ -112,21 +112,33 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       {activeAccount && (
         <div className="card-obsidian p-6 rounded-2xl border-emerald-500/30 shadow-[0_4px_24px_-4px_rgba(16,185,129,0.12)]">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            {/* Left: Rendered Player Skin Model on Pedestal */}
+            {/* Left: Rendered Player Skin Model on Holographic Pedestal */}
             <div className="flex flex-col sm:flex-row items-center gap-6">
-              <div className="relative p-2 rounded-xl bg-black/40 border border-white/10 flex flex-col items-center">
-                <MinecraftSkinCanvas
-                  skinUrl={activeAccount.skinUrl}
-                  capeUrl={activeAccount.capeUrl}
-                  model={activeAccount.model}
-                  mode="full"
-                  height={190}
-                  width={130}
-                  showPedestal={true}
-                  interactive={true}
-                />
+              <div className="relative p-3 rounded-2xl bg-gradient-to-b from-black/60 to-black/30 border border-white/10 flex flex-col items-center shadow-inner">
+                {/* Floating Minecraft Player Nametag */}
+                <div className="px-2.5 py-0.5 rounded bg-black/85 border border-white/20 text-white font-pixel text-[10px] shadow-md mb-1.5 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>{activeAccount.username}</span>
+                </div>
+
+                <div className="drop-shadow-[0_12px_24px_rgba(0,0,0,0.85)]">
+                  <MinecraftSkinCanvas
+                    skinUrl={activeAccount.skinUrl}
+                    capeUrl={activeAccount.capeUrl}
+                    model={activeAccount.model}
+                    mode="full"
+                    height={210}
+                    width={140}
+                    showPedestal={false}
+                    interactive={true}
+                  />
+                </div>
+
+                {/* Pedestal Stage Glow */}
+                <div className="w-32 h-6 -mt-3 rounded-[50%] bg-gradient-to-b from-[var(--mc-glow-color)] to-transparent border-t border-[var(--mc-accent)]/50 blur-[1px] pointer-events-none" />
+
                 <span className="text-[9px] font-mono font-bold text-slate-400 mt-1">
-                  Click to rotate
+                  Drag to rotate 360°
                 </span>
               </div>
 
@@ -143,7 +155,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   ) : (
                     <span className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
                       <OfflineShieldIcon className="w-2.5 h-2.5" />
-                      OFFLINE PROFILE ({activeAccount.skinProvider ? activeAccount.skinProvider.toUpperCase() : 'ELY.BY READY'})
+                      OFFLINE ({activeAccount.skinProvider ? activeAccount.skinProvider.toUpperCase() : 'ELY.BY READY'})
                     </span>
                   )}
                 </div>
@@ -157,14 +169,14 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     Model: <strong className="text-white uppercase">{activeAccount.model}</strong>
                   </span>
                   <span className="text-[10px] font-mono bg-black/50 px-2.5 py-1 rounded border border-white/10 text-slate-300">
-                    Cape: <strong className="text-emerald-400">{activeAccount.capeName || 'Default'}</strong>
+                    Cape: <strong className="text-emerald-400">{activeAccount.capeName || 'Equipped'}</strong>
                   </span>
                 </div>
 
                 <div className="pt-2">
                   <button
                     onClick={() => handleOpenSkinManager(activeAccount)}
-                    className="btn-mc btn-mc-green flex items-center gap-2 px-3.5 py-1.5 text-xs font-bold text-white rounded cursor-pointer"
+                    className="btn-mc btn-mc-green flex items-center gap-2 px-4 py-2 text-xs font-bold text-white rounded cursor-pointer font-display"
                   >
                     <Palette className="w-3.5 h-3.5" />
                     <span>Customize Skin & Cape</span>

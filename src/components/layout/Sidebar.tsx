@@ -31,7 +31,11 @@ import {
   PotionBottleIcon,
   DragonEggIcon,
   TridentIcon,
+  TheBoysEmblemIcon,
   MinecraftShieldIcon,
+  NetherStarIcon,
+  EnderPearlIcon,
+  ElytraWingsIcon,
   MicrosoftBrandIcon,
   OfflineShieldIcon,
 } from '../icons/MinecraftIcons';
@@ -128,13 +132,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return <TridentIcon className="w-7 h-7 shrink-0" />;
       case 'shield':
         return <MinecraftShieldIcon className="w-7 h-7 shrink-0" />;
+      case 'nether_star':
+        return <NetherStarIcon className="w-7 h-7 shrink-0" />;
+      case 'ender_pearl':
+        return <EnderPearlIcon className="w-7 h-7 shrink-0" />;
+      case 'elytra':
+        return <ElytraWingsIcon className="w-7 h-7 shrink-0" />;
+      case 'emblem':
+        return <TheBoysEmblemIcon className="w-7 h-7 shrink-0" />;
       default:
         return (
-          <img
-            src="/logo.png"
-            alt="The Boys Official Logo"
-            className="w-7 h-7 rounded-lg object-contain shadow-sm shrink-0"
-          />
+          <TheBoysEmblemIcon className="w-7 h-7 shrink-0" />
         );
     }
   };
@@ -164,12 +172,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className={`bg-[#0b0e14] border-r border-[#1c2230] flex flex-col justify-between select-none h-screen shrink-0 shadow-2xl relative z-30 transition-[width] duration-200 ease-in-out motion-reduce:transition-none ${isCollapsed ? 'w-20' : 'w-64'
+      className={`bg-[var(--mc-surface)] border-r border-[var(--mc-border)] flex flex-col justify-between select-none h-screen shrink-0 shadow-2xl relative z-30 transition-[width,background-color,border-color] duration-200 ease-in-out motion-reduce:transition-none ${isCollapsed ? 'w-20' : 'w-64'
         }`}
     >
       <div className="overflow-y-auto">
         {/* Brand Lockup & Collapse Toggle */}
-        <div className={`px-4 py-4 border-b border-[#1c2230] flex items-center bg-gradient-to-b from-white/[0.03] to-transparent ${isCollapsed ? 'justify-center' : 'justify-between'
+        <div className={`px-4 py-4 border-b border-[var(--mc-border)] flex items-center bg-gradient-to-b from-white/[0.03] to-transparent ${isCollapsed ? 'justify-center' : 'justify-between'
           }`}>
           {!isCollapsed ? (
             <div className="flex items-center justify-between w-full">
@@ -301,7 +309,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer: ACTIVE PLAYER SKIN + CONSOLE */}
-      <div className="p-3 border-t border-[#1c2230] space-y-2 bg-[#080a0f] shrink-0">
+      <div className="p-3 border-t border-[var(--mc-border)] space-y-2 bg-[var(--mc-surface)]/80 shrink-0">
         {/* Player Profile & Skin */}
         {activeAccount && (
           <div

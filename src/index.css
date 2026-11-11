@@ -40,7 +40,7 @@ select,
 
 @layer base {
   html {
-    font-size: 94%;
+    font-size: 15px;
   }
 
   * {
@@ -48,22 +48,24 @@ select,
   }
 
   body {
-    font-family: 'VT323', 'Courier New', monospace;
-    font-size: 21px;
-    line-height: 1.35;
+    font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.45;
+    letter-spacing: 0.025em;
     background-color: var(--mc-bg);
-    color: #e2e8f0;
+    color: var(--mc-text);
     overflow-x: hidden;
     user-select: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    /* Authentic Minecraft Stone UI Tile & Ambient Glow */
+    /* Futuristic Titanium Obsidian & Sci-Fi Conduit Grid Ambient Glow */
     background-image:
       radial-gradient(circle at 50% 0%, var(--mc-glow-color) 0%, transparent 65%),
-      linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-    background-size: 100% 100%, 32px 32px, 32px 32px;
+      linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    background-size: 100% 100%, 36px 36px, 36px 36px;
   }
 
   h1,
@@ -73,34 +75,40 @@ select,
   h5,
   h6,
   .font-display {
-    font-family: 'Pixelify Sans', 'Trebuchet MS', sans-serif;
-    letter-spacing: -0.02em;
+    font-family: 'Chakra Petch', 'Pixelify Sans', sans-serif;
+    letter-spacing: 0.01em;
+    font-weight: 700;
   }
 
   code,
   pre,
   .font-mono {
-    font-family: 'VT323', 'Courier New', monospace;
+    font-family: 'JetBrains Mono', 'VT323', monospace;
     font-variant-numeric: tabular-nums;
   }
 }
 
 .font-pixel {
-  font-family: 'Press Start 2P', 'Pixelify Sans', sans-serif;
-  letter-spacing: 0;
-  line-height: 1.65;
+  font-family: 'Pixelify Sans', 'Press Start 2P', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.font-mc {
+  font-family: 'Pixelify Sans', sans-serif;
+  text-shadow: 2px 2px 0px rgba(0, 0, 0, 0.85);
 }
 
 .font-display {
-  font-family: 'Pixelify Sans', 'Trebuchet MS', sans-serif;
+  font-family: 'Chakra Petch', 'Pixelify Sans', sans-serif;
 }
 
 button,
 input,
 textarea,
 select {
-  font-family: 'VT323', 'Courier New', monospace;
-  font-size: 1.05em;
+  font-family: 'Rajdhani', 'Chakra Petch', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
 }
 
 /* ==========================================================================
@@ -607,19 +615,17 @@ select option {
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
 textarea {
   color: #f1f5f9;
-  background-color: #242832;
-  background-image:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.025) 3px 4px),
-    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.08) 3px 4px),
-    linear-gradient(180deg, #303542 0%, #232732 100%);
-  border: 2px solid #11141b;
-  border-radius: 4px;
+  background-color: #151922;
+  background-image: linear-gradient(180deg, #181d28 0%, #12151d 100%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
   box-shadow:
-    inset 2px 2px 0 rgba(255,  255, 255, 0.1),
-    inset -2px -2px 0 rgba(0, 0, 0, 0.45);
-  font-family: 'VT323', 'Courier New', monospace;
-  font-size: 19px;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+    inset 1px 1px 2px rgba(0, 0, 0, 0.5),
+    inset -1px -1px 0 rgba(255, 255, 255, 0.05);
+  font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   transition: border-color 100ms ease, box-shadow 100ms ease;
 }
 
@@ -629,15 +635,14 @@ select:focus {
   outline: none;
   border-color: var(--mc-accent);
   box-shadow:
-    inset 2px 2px 0 rgba(255, 255, 255, 0.12),
-    inset -2px -2px 0 rgba(0, 0, 0, 0.45),
+    inset 1px 1px 2px rgba(0, 0, 0, 0.5),
     0 0 0 2px var(--mc-glow-color);
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: #9aa2b2;
-  opacity: 0.8;
+  color: #7d8597;
+  opacity: 0.85;
 }
 
 input[type="checkbox"],
@@ -681,7 +686,12 @@ input[type="radio"] {
   image-rendering: crisp-edges;
 }
 
-/* Refined control surfaces: preserve Minecraft colors without the heavy stone bevel */
+/* ==========================================================================
+   Minecraft Bedrock Edition Button Engine
+   Clean, smooth beveled stone slabs with solid tactile bevels, authentic Bedrock
+   green play button, and physical depression without noisy crosshatch mesh.
+   ========================================================================== */
+
 .btn-mc,
 .btn-minecraft-secondary,
 .btn-mc-green,
@@ -697,86 +707,273 @@ input[type="radio"] {
 .btn-tactile-amber,
 .btn-mc-diamond,
 .btn-mc-modrinth,
-.btn-tactile-cyan {
-  border-width: 1px;
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 4px 10px rgba(0, 0, 0, 0.14);
-  text-shadow: none;
-  transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+.btn-tactile-cyan,
+.btn-mc-purple {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #101216;
+  border-radius: 4px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  transition: filter 100ms ease, transform 80ms ease, box-shadow 80ms ease, background-color 100ms ease;
+  user-select: none;
+  overflow: hidden;
 }
 
-.btn-mc::after,
-.btn-minecraft-secondary::after,
-.btn-mc-green::after,
-.btn-mc-red::after,
-.btn-mc-diamond::after {
-  display: none;
+/* 1. Classic Minecraft Bedrock Stone Button (Clean Gray Bevel Slab) */
+.btn-mc,
+.btn-minecraft-secondary {
+  background-color: #3b404d;
+  background-image: linear-gradient(180deg, #484e5e 0%, #323743 100%);
+  color: #f1f5f9;
+  box-shadow:
+    inset 2px 2px 0px #676f82,
+    inset -2px -2px 0px #1a1c22,
+    0 2px 5px rgba(0, 0, 0, 0.4);
 }
 
+.btn-mc:hover:not(:disabled),
+.btn-minecraft-secondary:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #555c6e 0%, #3d4352 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 2px 2px 0px #7d869c,
+    inset -2px -2px 0px #14161b,
+    0 4px 10px rgba(0, 0, 0, 0.5);
+  filter: brightness(1.08);
+}
+
+.btn-mc:active:not(:disabled),
+.btn-minecraft-secondary:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #252830 0%, #333742 100%);
+  box-shadow:
+    inset 2px 2px 0px #121417,
+    inset -2px -2px 0px #4d5362;
+  transform: translate(1px, 2px);
+}
+
+/* 2. Minecraft Bedrock Edition Emerald Green Play Button */
 .btn-mc-green,
 .btn-mc-primary,
 .btn-play-tactile,
 .btn-minecraft-play {
-  background-image: linear-gradient(180deg, var(--mc-btn-primary-hover, #388e3c), var(--mc-btn-primary, #256b29));
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--mc-btn-primary, #256b29) 24%, transparent);
+  background-color: var(--mc-btn-primary, #327521);
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-hover, #3c8827) 0%, var(--mc-btn-primary, #296f18) 100%);
+  color: #ffffff;
+  border-color: var(--mc-btn-primary-border, #0e2a07);
+  box-shadow:
+    inset 2px 2px 0px var(--mc-btn-primary-highlight, #5ec73c),
+    inset -2px -2px 0px var(--mc-btn-primary-shadow, #16460c),
+    0 3px 8px rgba(0, 0, 0, 0.45);
+  text-shadow: 1px 1px 0px #0b2106;
 }
 
 .btn-mc-green:hover:not(:disabled),
 .btn-mc-primary:hover:not(:disabled),
 .btn-play-tactile:hover:not(:disabled),
-.btn-minecraft-play:hover:not(:disabled),
-.btn-mc-red:hover:not(:disabled),
-.btn-stop-tactile:hover:not(:disabled),
-.btn-minecraft-stop:hover:not(:disabled),
-.btn-mc-amber:hover:not(:disabled),
-.btn-mc-curseforge:hover:not(:disabled),
-.btn-tactile-amber:hover:not(:disabled),
-.btn-mc-diamond:hover:not(:disabled),
-.btn-mc-modrinth:hover:not(:disabled),
-.btn-tactile-cyan:hover:not(:disabled),
-.btn-mc-wood:hover:not(:disabled),
-.btn-mc:hover:not(:disabled),
-.btn-minecraft-secondary:hover:not(:disabled) {
-  transform: translateY(-1px);
+.btn-minecraft-play:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-highlight, #4aa631) 0%, var(--mc-btn-primary-hover, #348820) 100%);
+  box-shadow:
+    inset 2px 2px 0px #75e050,
+    inset -2px -2px 0px var(--mc-btn-primary-border, #0e2a07),
+    0 4px 14px color-mix(in srgb, var(--mc-btn-primary, #327521) 45%, transparent);
   filter: brightness(1.08);
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.2);
 }
 
-.btn-mc:active:not(:disabled),
-.btn-minecraft-secondary:active:not(:disabled),
 .btn-mc-green:active:not(:disabled),
 .btn-mc-primary:active:not(:disabled),
 .btn-play-tactile:active:not(:disabled),
-.btn-minecraft-play:active:not(:disabled),
+.btn-minecraft-play:active:not(:disabled) {
+  background-image: linear-gradient(180deg, var(--mc-btn-primary-active, #18430d) 0%, var(--mc-btn-primary, #256316) 100%);
+  box-shadow:
+    inset 2px 2px 0px var(--mc-btn-primary-border, #0e2a07),
+    inset -2px -2px 0px var(--mc-btn-primary-highlight, #4aa631);
+  transform: translate(1px, 2px);
+}
+
+/* 3. Redstone Core / Danger Stop Button */
+.btn-mc-red,
+.btn-stop-tactile,
+.btn-minecraft-stop {
+  background-color: #b71c1c;
+  background-image: linear-gradient(180deg, #d32f2f 0%, #991b1b 100%);
+  color: #ffffff;
+  border-color: #3b0808;
+  box-shadow:
+    inset 2px 2px 0px #f87171,
+    inset -2px -2px 0px #5e0e0e,
+    0 4px 10px rgba(0, 0, 0, 0.6);
+}
+
+.btn-mc-red:hover:not(:disabled),
+.btn-stop-tactile:hover:not(:disabled),
+.btn-minecraft-stop:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+  box-shadow:
+    inset 2px 2px 0px #fca5a5,
+    inset -2px -2px 0px #3b0808,
+    0 5px 16px rgba(239, 68, 68, 0.45);
+  filter: brightness(1.1);
+}
+
 .btn-mc-red:active:not(:disabled),
 .btn-stop-tactile:active:not(:disabled),
-.btn-minecraft-stop:active:not(:disabled),
-.btn-mc-wood:active:not(:disabled),
-.btn-mc-amber:active:not(:disabled),
-.btn-mc-curseforge:active:not(:disabled),
-.btn-tactile-amber:active:not(:disabled),
+.btn-minecraft-stop:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #651010 0%, #991b1b 100%);
+  box-shadow:
+    inset 2px 2px 0px #320707,
+    inset -2px -2px 0px #f87171;
+  transform: translate(2px, 2px);
+}
+
+/* 4. Glacial Diamond Cyan Button */
+.btn-mc-diamond,
+.btn-mc-modrinth,
+.btn-tactile-cyan {
+  background-color: #0284c7;
+  background-image: linear-gradient(180deg, #0284c7 0%, #0369a1 100%);
+  color: #ffffff;
+  border-color: #062235;
+  box-shadow:
+    inset 2px 2px 0px #7dd3fc,
+    inset -2px -2px 0px #075985,
+    0 4px 10px rgba(0, 0, 0, 0.6);
+}
+
+.btn-mc-diamond:hover:not(:disabled),
+.btn-mc-modrinth:hover:not(:disabled),
+.btn-tactile-cyan:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+  box-shadow:
+    inset 2px 2px 0px #bae6fd,
+    inset -2px -2px 0px #062235,
+    0 5px 16px rgba(2, 132, 199, 0.45);
+  filter: brightness(1.1);
+}
+
 .btn-mc-diamond:active:not(:disabled),
 .btn-mc-modrinth:active:not(:disabled),
 .btn-tactile-cyan:active:not(:disabled) {
-  transform: translateY(0) scale(0.99);
-  filter: brightness(0.98);
+  background-image: linear-gradient(180deg, #054163 0%, #0369a1 100%);
+  box-shadow:
+    inset 2px 2px 0px #042031,
+    inset -2px -2px 0px #7dd3fc;
+  transform: translate(2px, 2px);
 }
 
-/* Unified card system: layered surfaces, clear edges, and quiet accent rails */
-.card-obsidian {
+/* 5. Nether Blaze Amber Gold Button */
+.btn-mc-amber,
+.btn-mc-curseforge,
+.btn-tactile-amber {
+  background-color: #b45309;
+  background-image: linear-gradient(180deg, #d97706 0%, #92400e 100%);
+  color: #ffffff;
+  border-color: #381502;
+  box-shadow:
+    inset 2px 2px 0px #fde68a,
+    inset -2px -2px 0px #78350f,
+    0 4px 10px rgba(0, 0, 0, 0.6);
+}
+
+.btn-mc-amber:hover:not(:disabled),
+.btn-mc-curseforge:hover:not(:disabled),
+.btn-tactile-amber:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
+  box-shadow:
+    inset 2px 2px 0px #fef08a,
+    inset -2px -2px 0px #381502,
+    0 5px 16px rgba(217, 119, 6, 0.45);
+  filter: brightness(1.1);
+}
+
+.btn-mc-amber:active:not(:disabled),
+.btn-mc-curseforge:active:not(:disabled),
+.btn-tactile-amber:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #582408 0%, #92400e 100%);
+  box-shadow:
+    inset 2px 2px 0px #2a1103,
+    inset -2px -2px 0px #fde68a;
+  transform: translate(2px, 2px);
+}
+
+/* 6. Ender Void Amethyst Purple Button */
+.btn-mc-purple {
+  background-color: #7e22ce;
+  background-image: linear-gradient(180deg, #9333ea 0%, #6b21a8 100%);
+  color: #ffffff;
+  border-color: #2b044a;
+  box-shadow:
+    inset 2px 2px 0px #d8b4fe,
+    inset -2px -2px 0px #581c87,
+    0 4px 10px rgba(0, 0, 0, 0.6);
+}
+
+.btn-mc-purple:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #a855f7 0%, #7e22ce 100%);
+  box-shadow:
+    inset 2px 2px 0px #e9d5ff,
+    inset -2px -2px 0px #2b044a,
+    0 5px 16px rgba(168, 85, 247, 0.45);
+  filter: brightness(1.1);
+}
+
+.btn-mc-purple:active:not(:disabled) {
+  background-image: linear-gradient(180deg, #411364 0%, #6b21a8 100%);
+  box-shadow:
+    inset 2px 2px 0px #1f0532,
+    inset -2px -2px 0px #d8b4fe;
+  transform: translate(2px, 2px);
+}
+
+/* Unified card system: authentic tactile stone slab with bevels and micro-texture */
+.card-obsidian,
+.card-scifi,
+.card-tactile {
   position: relative;
-  background-color: color-mix(in srgb, var(--mc-surface) 94%, #ffffff 6%);
+  background-color: #171c28 !important;
   background-image:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 55%),
-    radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--mc-accent) 7%, transparent), transparent 60%);
-  border: 1px solid color-mix(in srgb, var(--mc-border) 78%, #ffffff 8%);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 8px 24px rgba(0, 0, 0, 0.17);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease, background-color 180ms ease;
+    linear-gradient(180deg, #232b3d 0%, #161b27 100%) !important;
+  border-style: solid !important;
+  border-width: 2px !important;
+  border-color: #0d1017 !important;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.16),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.6),
+    0 6px 20px rgba(0, 0, 0, 0.45) !important;
+  border-radius: 8px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 100ms ease, background-image 120ms ease;
+}
+
+.card-obsidian::after,
+.card-scifi::after,
+.card-tactile::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 6px;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.025) 3px 4px),
+    repeating-linear-gradient(90deg, transparent 0 3px, rgba(0, 0, 0, 0.035) 3px 4px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.card-obsidian > *,
+.card-scifi > *,
+.card-tactile > * {
+  position: relative;
+  z-index: 1;
 }
 
 .card-selectable {
   --card-accent: var(--mc-accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
 .card-selectable[data-tone="ice"] { --card-accent: #5fc5df; }
@@ -786,19 +983,32 @@ input[type="radio"] {
 .card-selectable[data-tone="blue"] { --card-accent: #6aa9dc; }
 
 .card-selectable.card-selected {
-  border-color: color-mix(in srgb, var(--card-accent) 72%, var(--mc-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--card-accent) 24%, transparent), 0 12px 30px rgba(0, 0, 0, 0.23);
+  border-color: var(--card-accent, var(--mc-accent)) !important;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.28),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.65),
+    0 0 0 1px var(--card-accent, var(--mc-accent)),
+    0 8px 30px rgba(0, 0, 0, 0.6) !important;
 }
 
-.card-obsidian.cursor-pointer:hover {
-  border-color: color-mix(in srgb, var(--mc-accent) 42%, var(--mc-border));
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22), 0 14px 30px rgba(0, 0, 0, 0.2);
+.card-obsidian.cursor-pointer:hover,
+.card-selectable.cursor-pointer:hover {
+  background-image:
+    linear-gradient(180deg, #2b354b 0%, #1c2232 100%) !important;
+  border-color: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 70%, #ffffff) !important;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.24),
+    inset -2px -2px 0px rgba(0, 0, 0, 0.65),
+    0 8px 24px rgba(0, 0, 0, 0.5) !important;
   transform: translateY(-2px);
 }
 
-.card-selectable.cursor-pointer:hover {
-  border-color: color-mix(in srgb, var(--card-accent) 52%, var(--mc-border));
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22), 0 14px 30px rgba(0, 0, 0, 0.2);
+.card-selectable.cursor-pointer:active {
+  transform: translate(1px, 2px);
+  box-shadow:
+    inset 2px 2px 0px rgba(0, 0, 0, 0.75),
+    inset -2px -2px 0px rgba(255, 255, 255, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.4) !important;
 }
 
 .card-obsidian.cursor-pointer:focus-visible {
@@ -808,24 +1018,50 @@ input[type="radio"] {
 
 .card-icon-tile {
   color: var(--card-accent, var(--mc-accent));
-  background: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 12%, var(--mc-surface));
-  border: 1px solid color-mix(in srgb, var(--card-accent, var(--mc-accent)) 24%, var(--mc-border));
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.07);
+  background: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 12%, rgba(14, 18, 27, 0.8));
+  border: 1px solid color-mix(in srgb, var(--card-accent, var(--mc-accent)) 24%, rgba(255, 255, 255, 0.15));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.1);
 }
 
 .card-inset {
-  background: color-mix(in srgb, var(--mc-bg) 48%, var(--mc-surface));
-  border: 1px solid color-mix(in srgb, var(--mc-border) 75%, transparent);
+  background: rgba(8, 11, 17, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
 }
 
+/* Minecraft Bedrock Edition Sidebar Navigation Button Textures */
 .nav-item-active {
-  background: linear-gradient(100deg, color-mix(in srgb, var(--mc-accent) 13%, var(--mc-surface)), color-mix(in srgb, var(--mc-accent) 5%, var(--mc-surface)));
-  border: 1px solid color-mix(in srgb, var(--mc-accent) 18%, var(--mc-border));
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--mc-accent) 8%, transparent);
-  color: var(--mc-text);
-  border-radius: 12px;
+  background: linear-gradient(180deg, #378024 0%, #256317 100%) !important;
+  border: 1px solid #133f0a !important;
+  box-shadow:
+    inset 1px 1px 0px #68df41,
+    inset -1px -1px 0px #0d2b06,
+    0 3px 8px rgba(0, 0, 0, 0.45) !important;
+  color: #ffffff !important;
+  text-shadow: 1px 1px 0px #0b2205 !important;
+  border-radius: 4px !important;
 }
-.nav-item-idle { border: 1px solid transparent; }
+
+.nav-item-idle {
+  background: linear-gradient(180deg, rgba(46, 52, 66, 0.55) 0%, rgba(30, 35, 46, 0.55) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow:
+    inset 1px 1px 0px rgba(255, 255, 255, 0.1),
+    inset -1px -1px 0px rgba(0, 0, 0, 0.4) !important;
+  border-radius: 4px !important;
+  text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.7);
+  transition: all 100ms ease;
+}
+
+.nav-item-idle:hover {
+  background: linear-gradient(180deg, rgba(62, 71, 90, 0.8) 0%, rgba(40, 46, 60, 0.8) 100%) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow:
+    inset 1px 1px 0px rgba(255, 255, 255, 0.2),
+    inset -1px -1px 0px rgba(0, 0, 0, 0.45) !important;
+  color: #ffffff !important;
+  transform: translateX(1px);
+}
 
 .choice-card {
   --choice-accent: var(--mc-accent);
@@ -984,32 +1220,46 @@ input[type="radio"] {
 }
 
 [data-color-scheme="light"] body {
-  color: #24231f;
-  background-color: var(--mc-bg);
+  color: #1a1915;
+  background-color: #ece8dd;
   background-image:
     radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 65%),
-    linear-gradient(rgba(67, 63, 54, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(67, 63, 54, 0.045) 1px, transparent 1px);
+    linear-gradient(rgba(60, 56, 46, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(60, 56, 46, 0.04) 1px, transparent 1px);
 }
 
 [data-color-scheme="light"] #root,
 [data-color-scheme="light"] main,
 [data-color-scheme="light"] header,
 [data-color-scheme="light"] aside {
-  color: #24231f;
+  color: #1a1915;
 }
 
-[data-color-scheme="light"] .text-white:not(.btn-mc):not(.btn-mc *),
-[data-color-scheme="light"] .text-slate-100:not(.btn-mc):not(.btn-mc *),
-[data-color-scheme="light"] .text-slate-200:not(.btn-mc):not(.btn-mc *),
-[data-color-scheme="light"] .text-slate-300:not(.btn-mc):not(.btn-mc *) {
-  color: #292820 !important;
+[data-color-scheme="light"] aside {
+  background-color: #f1ede3 !important;
+  border-color: #d3ccc0 !important;
+  box-shadow: 4px 0 24px rgba(60, 50, 35, 0.06) !important;
+}
+
+[data-color-scheme="light"] header {
+  background-color: rgba(246, 243, 236, 0.94) !important;
+  border-color: #d3ccc0 !important;
+}
+
+[data-color-scheme="light"] .text-white:not(.btn-mc-green):not(.btn-mc-primary):not(.btn-mc-red):not(.btn-mc-diamond):not(.btn-mc-amber):not(.btn-mc-purple):not(.btn-mc-green *):not(.btn-mc-red *):not(.btn-mc-diamond *):not(.btn-mc-amber *):not(.btn-mc-purple *) {
+  color: #1a1915 !important;
+}
+
+[data-color-scheme="light"] .text-slate-100,
+[data-color-scheme="light"] .text-slate-200,
+[data-color-scheme="light"] .text-slate-300 {
+  color: #2c2a24 !important;
 }
 
 [data-color-scheme="light"] .text-slate-400,
 [data-color-scheme="light"] .text-slate-500,
 [data-color-scheme="light"] .text-slate-600 {
-  color: #575247 !important;
+  color: #5c564a !important;
 }
 
 [data-color-scheme="light"] [class*="text-emerald-"]:not(.btn-mc):not(.btn-mc *),
@@ -1047,7 +1297,35 @@ input[type="radio"] {
   color: #6b21a8 !important;
 }
 
-[data-color-scheme="light"] .nav-item-active { background: linear-gradient(100deg, color-mix(in srgb, var(--mc-accent) 11%, #ffffff), #ffffff); }
+/* Light Mode Navigation Tabs */
+[data-color-scheme="light"] .nav-item-idle {
+  background: linear-gradient(180deg, #f7f4ec 0%, #e6e2d4 100%) !important;
+  border: 1px solid #c8c1b2 !important;
+  box-shadow:
+    inset 1px 1px 0px #ffffff,
+    inset -1px -1px 0px #b9b2a2,
+    0 1px 3px rgba(0, 0, 0, 0.06) !important;
+  color: #38342c !important;
+  text-shadow: none !important;
+}
+
+[data-color-scheme="light"] .nav-item-idle:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #ede9dc 100%) !important;
+  border-color: #a8a090 !important;
+  color: #11100e !important;
+}
+
+[data-color-scheme="light"] .nav-item-active {
+  background: linear-gradient(180deg, #2e7d32 0%, #1e5922 100%) !important;
+  border: 1px solid #133f0a !important;
+  box-shadow:
+    inset 1px 1px 0px #68df41,
+    inset -1px -1px 0px #0d2b06,
+    0 3px 8px rgba(0, 0, 0, 0.25) !important;
+  color: #ffffff !important;
+  text-shadow: 1px 1px 0px #0b2205 !important;
+}
+
 [data-color-scheme="light"] .choice-card {
   background: linear-gradient(115deg, color-mix(in srgb, var(--choice-accent) 6%, #ffffff), #f7f5ef);
   box-shadow: 0 2px 5px rgba(54, 48, 36, 0.05), 0 8px 18px rgba(54, 48, 36, 0.08);
@@ -1058,40 +1336,48 @@ input[type="radio"] {
     linear-gradient(90deg, rgba(255, 253, 247, 0.97) 0%, rgba(255, 253, 247, 0.90) 48%, rgba(255, 253, 247, 0.56) 100%),
     url("./assets/images/mc_hero_banner_1794229759381.jpg");
 }
-[data-color-scheme="light"] .card-obsidian {
-  background-color: color-mix(in srgb, var(--mc-surface) 98%, #ffffff 2%);
-  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.75), transparent 60%);
-  border-color: color-mix(in srgb, var(--mc-border) 78%, #ffffff);
-  box-shadow: 0 1px 2px rgba(54, 48, 36, 0.05), 0 8px 24px rgba(54, 48, 36, 0.09);
+
+/* Light Mode Cards */
+[data-color-scheme="light"] .card-obsidian,
+[data-color-scheme="light"] .card-scifi {
+  background-color: rgba(255, 253, 248, 0.92) !important;
+  background-image:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(242, 238, 228, 0.90)),
+    radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--mc-accent) 10%, transparent), transparent 60%) !important;
+  backdrop-filter: blur(18px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(120%) !important;
+  border: 1px solid rgba(195, 188, 174, 0.8) !important;
+  box-shadow: 0 4px 20px rgba(55, 48, 35, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+  color: #1e1d19 !important;
 }
 
 [data-color-scheme="light"] .card-selectable {
-  box-shadow: 0 1px 2px rgba(54, 48, 36, 0.05), 0 8px 24px rgba(54, 48, 36, 0.09);
+  box-shadow: 0 2px 8px rgba(54, 48, 36, 0.06);
 }
 
 [data-color-scheme="light"] .card-selectable.card-selected {
-  border-color: color-mix(in srgb, var(--card-accent) 70%, var(--mc-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--card-accent) 22%, transparent), 0 10px 24px rgba(54, 48, 36, 0.12);
+  border-color: color-mix(in srgb, var(--card-accent) 75%, var(--mc-border)) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--card-accent) 30%, transparent), 0 8px 24px rgba(54, 48, 36, 0.12) !important;
 }
 
 [data-color-scheme="light"] .card-obsidian.cursor-pointer:hover {
-  border-color: color-mix(in srgb, var(--mc-accent) 42%, var(--mc-border));
-  box-shadow: 0 3px 8px rgba(54, 48, 36, 0.08), 0 14px 28px rgba(54, 48, 36, 0.13);
+  border-color: color-mix(in srgb, var(--mc-accent) 55%, #c8c1b2) !important;
+  box-shadow: 0 6px 20px rgba(54, 48, 36, 0.10) !important;
 }
 
 [data-color-scheme="light"] .card-selectable.cursor-pointer:hover {
-  border-color: color-mix(in srgb, var(--card-accent) 52%, var(--mc-border));
-  box-shadow: 0 3px 8px rgba(54, 48, 36, 0.08), 0 14px 28px rgba(54, 48, 36, 0.13);
+  border-color: color-mix(in srgb, var(--card-accent) 60%, #c8c1b2) !important;
+  box-shadow: 0 6px 20px rgba(54, 48, 36, 0.10) !important;
 }
 
 [data-color-scheme="light"] .card-icon-tile {
-  background: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 8%, #ffffff);
-  border-color: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 25%, var(--mc-border));
+  background: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--card-accent, var(--mc-accent)) 25%, #c8c1b2) !important;
 }
 
 [data-color-scheme="light"] .card-inset {
-  background: color-mix(in srgb, var(--mc-surface) 70%, #e7e3d9);
-  border-color: color-mix(in srgb, var(--mc-border) 65%, #ffffff);
+  background: rgba(238, 234, 224, 0.85) !important;
+  border: 1px solid rgba(195, 188, 174, 0.7) !important;
 }
 
 [data-color-scheme="light"] .home-stat-grid { border-top-color: #e5e0d6; }
@@ -1101,30 +1387,71 @@ input[type="radio"] {
 [data-color-scheme="light"] .home-detail-panel { background-image: linear-gradient(125deg, rgba(110, 161, 177, 0.06), transparent 55%); }
 [data-color-scheme="light"] .home-action-link { background: rgba(255, 255, 255, 0.68); }
 
+/* Light Mode Secondary Stone Buttons */
+[data-color-scheme="light"] .btn-mc:not(.btn-mc-green):not(.btn-mc-primary):not(.btn-mc-red):not(.btn-mc-diamond):not(.btn-mc-amber):not(.btn-mc-purple) {
+  background-color: #e2ddd0 !important;
+  background-image: linear-gradient(180deg, #efebe0 0%, #d6d0c1 100%) !important;
+  color: #26241e !important;
+  border-color: #a39c8c !important;
+  box-shadow:
+    inset 1px 1px 0px #ffffff,
+    inset -1px -1px 0px #b2ab9a,
+    0 2px 4px rgba(0, 0, 0, 0.08) !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+[data-color-scheme="light"] .btn-mc:not(.btn-mc-green):not(.btn-mc-primary):not(.btn-mc-red):not(.btn-mc-diamond):not(.btn-mc-amber):not(.btn-mc-purple) *,
+[data-color-scheme="light"] .btn-minecraft-secondary * {
+  color: #26241e !important;
+}
+
+[data-color-scheme="light"] .btn-mc:not(.btn-mc-green):not(.btn-mc-primary):not(.btn-mc-red):not(.btn-mc-diamond):not(.btn-mc-amber):not(.btn-mc-purple):hover {
+  background-image: linear-gradient(180deg, #f7f4ec 0%, #ded9cb 100%) !important;
+  color: #11100e !important;
+  border-color: #8a8372 !important;
+}
+
 [data-color-scheme="light"] [class*="bg-black/"]:not(.btn-mc):not(.btn-mc *),
 [data-color-scheme="light"] [class*="bg-[#"]:not(.btn-mc):not(.btn-mc *) {
-  background-color: var(--mc-panel-raised) !important;
+  background-color: rgba(240, 236, 226, 0.9) !important;
 }
 
 [data-color-scheme="light"] [class*="border-white/"]:not(.btn-mc):not(.btn-mc *) {
-  border-color: var(--mc-line) !important;
+  border-color: rgba(185, 178, 164, 0.6) !important;
 }
 
 [data-color-scheme="light"] [class*="bg-gradient-to"]:not(.btn-mc):not(.btn-mc *) {
   background-image: linear-gradient(135deg, #fffdf7, #eeeae0) !important;
 }
 
-[data-color-scheme="light"] input:not([type="range"]):not([type="color"]),
-[data-color-scheme="light"] textarea,
-[data-color-scheme="light"] select {
-  color: #292820 !important;
-  background-color: #f7f5ef !important;
-  border-color: #bcb7aa !important;
+/* Light Mode Inputs & Dropdowns */
+[data-color-scheme="light"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+[data-color-scheme="light"] textarea {
+  color: #1c1b17 !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border-color: #c4beb1 !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08) !important;
 }
 
-[data-color-scheme="light"] .btn-mc,
-[data-color-scheme="light"] .btn-mc * {
-  color: #fff !important;
+[data-color-scheme="light"] input::placeholder,
+[data-color-scheme="light"] textarea::placeholder {
+  color: #8c8577 !important;
+}
+
+[data-color-scheme="light"] select,
+[data-color-scheme="light"] .select-mc {
+  background-color: #eae5d8 !important;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23474338' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>"),
+    linear-gradient(180deg, #f6f3ea 0%, #e1dcce 100%) !important;
+  color: #24221c !important;
+  border-color: #b0a998 !important;
+  box-shadow:
+    inset 1px 1px 0 #ffffff,
+    inset -1px -1px 0 #b0a998,
+    0 1px 3px rgba(0,0,0,0.06) !important;
+  text-shadow: none !important;
 }
 
 /* Older Hardware / Low-Spec Optimization Engine */

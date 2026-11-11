@@ -15,6 +15,7 @@ import { MinecraftInstance, InstalledMod, ModLoaderType } from '../../types/inst
 import { EnderEyeIcon } from '../icons/MinecraftIcons';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
 import { InstallTargetModal, InstallableItem } from '../common/InstallTargetModal';
+import { invokeInstallInstanceAddon, isTauriEnvironment } from '../../services/tauriBridge';
 
 interface ModsBrowserViewProps {
   activeInstance: MinecraftInstance | null;
@@ -75,30 +76,51 @@ export const ModsBrowserView: React.FC<ModsBrowserViewProps> = ({
     setIsInstallModalOpen(true);
   };
 
-  const handleConfirmInstall = (targetInstanceId: string, item: InstallableItem) => {
+  const handleConfirmInstall = async (targetInstanceId: string, item: InstallableItem) => {
     const targetInst = instances.find((i) => i.id === targetInstanceId) ?? null;
-    if (!targetInst || !item.filename || !item.version) {
-      setSearchError('The source did not provide a downloadable file and exact version. No item was added.');
+    if (!targetInst) {
+      setSearchError('Select an existing instance before installing.');
       return;
     }
+    setSearchError(null);
 
-    const installed: InstalledMod = {
-      id: String(item.id),
-      name: item.name,
-      filename: item.filename,
-      version: item.version,
-      enabled: true,
-      author: item.author,
-      description: item.description,
-      iconUrl: item.iconUrl || undefined,
-      source: item.source,
-      modrinthId: item.source === 'modrinth' ? String(item.id) : undefined,
-    };
+    try {
+      let finalFileName = item.filename || `${item.id}.jar`;
+      if (isTauriEnvironment()) {
+        const res = await invokeInstallInstanceAddon({
+          instance_id: targetInst.id,
+          addon_id: String(item.id),
+          addon_name: item.name,
+          addon_type: 'mod',
+          provider: (item.source as 'modrinth' | 'curseforge') || 'modrinth',
+          game_version: targetInst.gameVersion,
+          loader: targetInst.loader,
+          file_name: item.filename,
+        });
+        if (res.file_name) finalFileName = res.file_name;
+      }
 
-    if (onInstallModToInstance) {
-      onInstallModToInstance(targetInstanceId, installed);
-    } else {
-      onInstallMod(installed);
+      const installed: InstalledMod = {
+        id: String(item.id),
+        name: item.name,
+        filename: finalFileName,
+        version: item.version || 'Latest',
+        enabled: true,
+        author: item.author,
+        description: item.description,
+        iconUrl: item.iconUrl || undefined,
+        source: item.source,
+        modrinthId: item.source === 'modrinth' ? String(item.id) : undefined,
+      };
+
+      if (onInstallModToInstance) {
+        onInstallModToInstance(targetInstanceId, installed);
+      } else {
+        onInstallMod(installed);
+      }
+      playMinecraftLevelUpSound();
+    } catch (err) {
+      setSearchError(`Install failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 

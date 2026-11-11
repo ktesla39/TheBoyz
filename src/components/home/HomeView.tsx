@@ -20,6 +20,7 @@ import {
   MonitorCog,
   RefreshCw,
   AlertCircle,
+  Users,
 } from 'lucide-react';
 import { DesktopShortcutModal } from '../common/DesktopShortcutModal';
 import { MinecraftInstance } from '../../types/instance';
@@ -27,6 +28,7 @@ import { LauncherAccount } from '../../types/auth';
 import { MinecraftSkinCanvas } from '../skin/MinecraftSkinCanvas';
 import { MicrosoftBrandIcon, OfflineShieldIcon } from '../icons/MinecraftIcons';
 import { LoaderGlyph } from '../icons/LoaderGlyph';
+import { InstanceCircleLogo } from '../instances/InstanceCircleLogo';
 import { playMinecraftClickSound } from '../../services/soundService';
 import { TauriHardwareInfo, TauriJavaInstallation } from '../../services/tauriBridge';
 import { getRecommendedJavaVersion } from '../../services/mojangApi';
@@ -274,9 +276,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   >
                     <div className="flex items-start justify-between gap-2 min-w-0">
                       <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className="card-icon-tile w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
-                          <LoaderGlyph loader={inst.loader} className="w-5 h-5" />
-                        </div>
+                        <InstanceCircleLogo
+                          loader={inst.loader}
+                          icon={inst.icon}
+                          size="md"
+                        />
                         <div className="min-w-0 flex-1">
                           <h4 className="text-sm font-bold text-white tracking-tight font-display truncate">
                             {inst.name}
@@ -291,7 +295,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
                       {isSelected ? (
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--mc-badge-bg)] text-[var(--mc-badge-text)] border border-[var(--mc-accent)]/40 font-mono shrink-0">
-                          BOOT ACTIVE
+                          ACTIVE
                         </span>
                       ) : (
                         <button
@@ -351,8 +355,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="home-detail-list">
                 <div className="home-detail-item">
                   <span className="text-[10px] font-mono text-slate-400 uppercase">Mod Loader</span>
-                  <div className="text-sm font-bold text-white font-display flex items-center gap-1.5">
-                    <LoaderGlyph loader={activeInstance.loader} className="w-4 h-4" />
+                  <div className="text-sm font-bold text-white font-display flex items-center gap-2">
+                    <InstanceCircleLogo
+                      loader={activeInstance.loader}
+                      icon={activeInstance.icon}
+                      size="sm"
+                    />
                     <span className="uppercase">{activeInstance.loader}</span>
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono block">
@@ -387,13 +395,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         <aside className="space-y-5">
-          <div data-tone={activeAccount?.type === 'microsoft' ? 'ice' : 'amber'} className="card-obsidian home-account-panel rounded-2xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+          <div data-tone={activeAccount?.type === 'microsoft' ? 'ice' : 'amber'} className="card-obsidian home-account-panel rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="px-5 py-3.5 border-b border-white/5 flex items-center justify-between bg-black/25">
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[var(--mc-accent)] font-bold">
-                  Player Profile
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-[var(--mc-accent)] font-bold flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--mc-accent)] animate-pulse" />
+                  Player Command
                 </span>
-                <h2 className="text-base font-black text-white font-display mt-0.5">Your identity</h2>
+                <h2 className="text-base font-black text-white font-display mt-0.5">Active Avatar</h2>
               </div>
               {activeAccount && (
                 activeAccount.type === 'microsoft'
@@ -403,66 +412,103 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
 
             {activeAccount ? (
-              <div className="p-5">
-                <div className="flex items-center gap-4">
-                  <div className="w-[76px] h-[88px] shrink-0 rounded-xl bg-black/35 border border-white/10 flex items-end justify-center overflow-hidden">
+              <div className="p-5 flex flex-col items-center">
+                {/* Full-Body Player Character Stage & Pedestal */}
+                <div className="relative w-full flex flex-col items-center py-2">
+                  {/* Floating Minecraft Player Nametag */}
+                  <div className="px-3 py-1 rounded bg-black/85 border border-white/15 text-white font-pixel text-[11px] shadow-[0_4px_12px_rgba(0,0,0,0.8)] mb-2 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span>{activeAccount.username}</span>
+                  </div>
+
+                  {/* Character Viewport */}
+                  <div className="relative z-10 drop-shadow-[0_16px_28px_rgba(0,0,0,0.9)]">
                     <MinecraftSkinCanvas
                       skinUrl={activeAccount.skinUrl}
                       capeUrl={activeAccount.capeUrl}
                       model={activeAccount.model}
-                      mode="bust"
-                      height={82}
-                      width={70}
-                      interactive={false}
-                      className="translate-y-1"
+                      mode="full"
+                      height={210}
+                      width={140}
+                      interactive={true}
+                      className="block"
                     />
                   </div>
-                  <div className="min-w-0">
-                    <h3 className="text-lg font-black text-white font-display truncate">
-                      {activeAccount.username}
-                    </h3>
-                    <span className={`inline-flex items-center gap-1.5 mt-1.5 px-2 py-1 rounded text-[9px] font-mono font-bold border ${
+
+                  {/* Holographic Glowing Pedestal Stage */}
+                  <div className="w-36 h-8 -mt-3 rounded-[50%] bg-gradient-to-b from-[var(--mc-glow-color)] to-transparent border-t border-[var(--mc-accent)]/50 blur-[1px] pointer-events-none" />
+                  <div className="w-28 h-4 -mt-6 rounded-[50%] bg-[var(--mc-accent)]/20 blur-[3px] pointer-events-none" />
+
+                  <span className="text-[10px] font-mono text-slate-400 font-semibold tracking-wider uppercase mt-1">
+                    Drag to rotate 360°
+                  </span>
+                </div>
+
+                {/* Account Details & Badges */}
+                <div className="w-full mt-3 pt-3 border-t border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-400 font-mono">Status</span>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
                       activeAccount.type === 'microsoft'
-                        ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25'
-                        : 'text-amber-300 bg-amber-500/10 border-amber-500/25'
+                        ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                        : 'text-amber-300 bg-amber-500/10 border-amber-500/30'
                     }`}>
                       {activeAccount.type === 'microsoft'
                         ? <MicrosoftBrandIcon className="w-2.5 h-2.5" />
                         : <OfflineShieldIcon className="w-2.5 h-2.5" />}
-                      {activeAccount.type === 'microsoft' ? 'MICROSOFT' : 'OFFLINE PROFILE'}
+                      {activeAccount.type === 'microsoft' ? 'MICROSOFT ONLINE' : 'ELY.BY / OFFLINE'}
                     </span>
-                    <p className="text-[10px] text-slate-500 font-mono mt-2 truncate">
-                      {activeAccount.capeName
-                        ? `Cape · ${activeAccount.capeName}`
-                        : activeAccount.model
-                          ? `Model · ${activeAccount.model}`
-                          : 'Model not provided'}
-                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-400">Arm Geometry</span>
+                    <span className="text-white font-bold uppercase">{activeAccount.model || 'Classic'} (4px)</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-slate-400">Cloak / Cape</span>
+                    <span className="text-[var(--mc-accent)] font-bold">{activeAccount.capeName || 'Equipped'}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    <button
+                      onClick={() => {
+                        playMinecraftClickSound();
+                        if (onOpenSkinManager) onOpenSkinManager();
+                        else onNavigateTab('accounts');
+                      }}
+                      className="btn-mc btn-mc-green py-2 px-2 text-xs font-bold text-white rounded cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Palette className="w-3.5 h-3.5" />
+                      <span>Skin Studio</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        playMinecraftClickSound();
+                        onNavigateTab('accounts');
+                      }}
+                      className="btn-mc py-2 px-2 text-xs font-bold text-slate-200 rounded cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Accounts</span>
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    playMinecraftClickSound();
-                    if (onOpenSkinManager) onOpenSkinManager();
-                    else onNavigateTab('accounts');
-                  }}
-                  className="btn-mc w-full mt-4 px-3 py-2 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Palette className="w-3.5 h-3.5" />
-                  Customize Skin & Cape
-                </button>
               </div>
             ) : (
-              <div className="p-5">
-                <p className="text-sm font-semibold text-white">No player profile selected</p>
-                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Add an account to personalize your player and launch the game.
+              <div className="p-6 text-center">
+                <div className="w-12 h-12 mx-auto rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 mb-3">
+                  <Users className="w-6 h-6" />
+                </div>
+                <p className="text-sm font-bold text-white font-display">No Profile Selected</p>
+                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed font-mono">
+                  Sign in with Microsoft or create an Ely.by offline profile to personalize your player.
                 </p>
                 <button
                   onClick={() => onNavigateTab('accounts')}
-                  className="btn-mc btn-mc-green w-full mt-4 px-3 py-2 text-xs font-bold text-white rounded cursor-pointer font-display"
+                  className="btn-mc btn-mc-green w-full mt-4 px-4 py-2.5 text-xs font-bold text-white rounded cursor-pointer font-display"
                 >
-                  Manage Accounts
+                  Configure Accounts
                 </button>
               </div>
             )}
