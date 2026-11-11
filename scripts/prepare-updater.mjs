@@ -43,6 +43,8 @@ config.plugins.updater = {
   pubkey: publicKey,
   requireSignedVersion: true,
 };
+config.bundle ??= {};
+config.bundle.createUpdaterArtifacts = true;
 
 const cargoManifest = await readFile(cargoManifestPath, 'utf8');
 const cargoManifestVersionPattern = /^(\[package\][\s\S]*?^version\s*=\s*")[^"]+(")/m;
