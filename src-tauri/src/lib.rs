@@ -1418,26 +1418,148 @@ async fn ping_minecraft_server(address: String) -> Result<ServerPingResult, Stri
     })
 }
 
-/// Creates a 1-click Windows or Linux Desktop shortcut
-#[tauri::command]
-fn create_desktop_shortcut(instance_name: String, instance_id: String) -> Result<String, String> {
-    validate_instance_id(&instance_id)?;
-    let safe_name = instance_name.replace(|c: char| !c.is_alphanumeric() && c != ' ', "_");
+#[cfg(target_os = "windows")]
+fn powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
 
-    if !cfg!(target_os = "windows") {
-        return Err("Desktop shortcut creation is not supported on this platform.".to_string());
+#[cfg(target_os = "windows")]
+fn validate_shortcut_icon(bytes: &[u8]) -> Result<(), String> {
+    const ICO_HEADER_SIZE: usize = 22;
+    const MAX_ICON_SIZE: usize = 4 * 1024 * 1024;
+    const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    if bytes.len() < ICO_HEADER_SIZE + PNG_SIGNATURE.len() || bytes.len() > MAX_ICON_SIZE {
+        return Err("The shortcut icon has an invalid size.".to_string());
+    }
+    if bytes[0..6] != [0, 0, 1, 0, 1, 0]
+        || u32::from_le_bytes(bytes[14..18].try_into().unwrap()) as usize
+            != bytes.len() - ICO_HEADER_SIZE
+        || u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize != ICO_HEADER_SIZE
+        || bytes[ICO_HEADER_SIZE..ICO_HEADER_SIZE + PNG_SIGNATURE.len()] != PNG_SIGNATURE
+    {
+        return Err("The shortcut icon is not a valid single-image PNG icon.".to_string());
+    }
+    Ok(())
+}
+
+/// Creates a Windows shortcut that opens the requested instance in the launcher.
+#[tauri::command]
+fn create_desktop_shortcut(
+    instance_name: String,
+    instance_id: String,
+    icon_ico_base64: String,
+) -> Result<String, String> {
+    validate_instance_id(&instance_id)?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (instance_name, icon_ico_base64);
+        return Err("Desktop shortcut creation is only supported on Windows.".to_string());
     }
 
-    let user_profile = std::env::var("USERPROFILE")
-        .map_err(|_| "Could not determine the current user's home directory.".to_string())?;
-    let desktop = PathBuf::from(user_profile).join("Desktop");
-    let bat_path = desktop.join(format!("{}.bat", safe_name));
-    let content = format!(
-        "@echo off\r\nstart \"\" \"the-boys-launcher.exe\" --launch-instance {}\r\n",
-        instance_id
-    );
-    fs::write(&bat_path, content).map_err(|e| e.to_string())?;
-    Ok(bat_path.to_string_lossy().to_string())
+    #[cfg(target_os = "windows")]
+    {
+        let icon_bytes = STANDARD
+            .decode(icon_ico_base64)
+            .map_err(|error| format!("Could not decode the shortcut icon: {error}"))?;
+        validate_shortcut_icon(&icon_bytes)?;
+
+        let safe_name = instance_name
+            .replace(
+                |character: char| !character.is_alphanumeric() && character != ' ',
+                "_",
+            )
+            .trim()
+            .to_string();
+        let safe_name = if safe_name.is_empty() {
+            "Minecraft Instance"
+        } else {
+            safe_name.as_str()
+        };
+        let target = std::env::current_exe()
+            .map_err(|error| format!("Could not locate the launcher executable: {error}"))?;
+        let working_directory = target
+            .parent()
+            .ok_or_else(|| "Could not determine the launcher directory.".to_string())?;
+        let icon_directory = get_app_data_dir()?.join("shortcut-icons");
+        fs::create_dir_all(&icon_directory)
+            .map_err(|error| format!("Could not create the shortcut icon directory: {error}"))?;
+        let icon_path = icon_directory.join(format!("{instance_id}.ico"));
+        fs::write(&icon_path, icon_bytes)
+            .map_err(|error| format!("Could not save the shortcut icon: {error}"))?;
+
+        let link_name = format!("Launch {safe_name}.lnk");
+        let link_name_literal = powershell_single_quoted(&link_name);
+        let target_literal = powershell_single_quoted(&target.to_string_lossy());
+        let working_directory_literal =
+            powershell_single_quoted(&working_directory.to_string_lossy());
+        let icon_literal = powershell_single_quoted(&format!("{},0", icon_path.to_string_lossy()));
+        let arguments_literal =
+            powershell_single_quoted(&format!("--launch-instance {instance_id}"));
+        let description_literal =
+            powershell_single_quoted(&format!("Launch {safe_name} with The Boys Launcher"));
+        let script = format!(
+            "$shell = New-Object -ComObject WScript.Shell; \
+             $desktop = $shell.SpecialFolders.Item('Desktop'); \
+             $path = Join-Path $desktop {link_name_literal}; \
+             $shortcut = $shell.CreateShortcut($path); \
+             $shortcut.TargetPath = {target_literal}; \
+             $shortcut.Arguments = {arguments_literal}; \
+             $shortcut.WorkingDirectory = {working_directory_literal}; \
+             $shortcut.IconLocation = {icon_literal}; \
+             $shortcut.Description = {description_literal}; \
+             $shortcut.Save(); \
+             [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($path))"
+        );
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ]);
+        suppress_console_window(&mut command);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not start Windows shortcut creation: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if detail.is_empty() {
+                "Windows could not create the desktop shortcut.".to_string()
+            } else {
+                format!("Windows could not create the desktop shortcut: {detail}")
+            });
+        }
+        let encoded_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let path_bytes = STANDARD
+            .decode(encoded_path)
+            .map_err(|error| format!("Windows returned an invalid shortcut path: {error}"))?;
+        let path = String::from_utf8(path_bytes)
+            .map_err(|error| format!("Windows returned an invalid shortcut path: {error}"))?;
+        if path.is_empty() {
+            return Err(
+                "Windows created the shortcut but did not return its location.".to_string(),
+            );
+        }
+        Ok(path)
+    }
+}
+
+#[tauri::command]
+fn get_startup_instance_id() -> Result<Option<String>, String> {
+    let arguments = std::env::args().collect::<Vec<_>>();
+    let Some(index) = arguments
+        .iter()
+        .position(|argument| argument == "--launch-instance")
+    else {
+        return Ok(None);
+    };
+    let instance_id = arguments
+        .get(index + 1)
+        .ok_or_else(|| "The launch shortcut did not include an instance ID.".to_string())?;
+    validate_instance_id(instance_id)?;
+    Ok(Some(instance_id.clone()))
 }
 
 /// Lists all instances stored in the local file system
@@ -3683,6 +3805,41 @@ mod path_validation_tests {
 }
 
 #[cfg(test)]
+#[cfg(target_os = "windows")]
+mod shortcut_icon_tests {
+    use super::{powershell_single_quoted, validate_shortcut_icon};
+
+    fn test_icon() -> Vec<u8> {
+        let png_signature = [137, 80, 78, 71, 13, 10, 26, 10];
+        let mut icon = vec![0; 22];
+        icon[2..6].copy_from_slice(&[1, 0, 1, 0]);
+        icon.extend_from_slice(&png_signature);
+        let image_size = png_signature.len() as u32;
+        icon[14..18].copy_from_slice(&image_size.to_le_bytes());
+        icon[18..22].copy_from_slice(&22u32.to_le_bytes());
+        icon
+    }
+
+    #[test]
+    fn accepts_png_icons_and_rejects_malformed_icons() {
+        let icon = test_icon();
+        assert!(validate_shortcut_icon(&icon).is_ok());
+
+        let mut invalid = icon;
+        invalid[0] = 1;
+        assert!(validate_shortcut_icon(&invalid).is_err());
+    }
+
+    #[test]
+    fn escapes_powershell_single_quoted_paths() {
+        assert_eq!(
+            powershell_single_quoted("D:\\Bob's\\Launcher"),
+            "'D:\\Bob''s\\Launcher'"
+        );
+    }
+}
+
+#[cfg(test)]
 mod oauth_callback_tests {
     use super::parse_oauth_callback;
 
@@ -3937,6 +4094,7 @@ pub fn run() {
             save_skin_file,
             ping_minecraft_server,
             create_desktop_shortcut,
+            get_startup_instance_id,
             list_instances,
             create_instance,
             delete_instance,

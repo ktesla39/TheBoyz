@@ -418,7 +418,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   {/* Floating Minecraft Player Nametag */}
                   <div className="px-3 py-1 rounded bg-black/85 border border-white/15 text-white font-pixel text-[11px] shadow-[0_4px_12px_rgba(0,0,0,0.8)] mb-2 flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    <span>{activeAccount.username}</span>
+                    <span>{activeAccount.customDisplayName || activeAccount.username}</span>
                   </div>
 
                   {/* Character Viewport */}

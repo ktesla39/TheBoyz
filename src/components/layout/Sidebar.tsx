@@ -182,7 +182,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!isCollapsed ? (
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-3">
-                {renderBrandIcon()}
+                <span data-launcher-brand-icon className="flex items-center justify-center">
+                  {renderBrandIcon()}
+                </span>
                 <div>
                   <h1 className="text-sm font-black tracking-tight text-white font-display flex items-center gap-1.5 leading-none">
                     THE BOYS
@@ -209,7 +211,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2">
-              {renderBrandIcon()}
+              <span data-launcher-brand-icon className="flex items-center justify-center">
+                {renderBrandIcon()}
+              </span>
               {onToggleCollapse && (
                 <button
                   type="button"
@@ -337,7 +341,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-extrabold text-white font-display truncate">
-                      {activeAccount.username}
+                      {activeAccount.customDisplayName || activeAccount.username}
                     </span>
                     {activeAccount.type === 'microsoft' ? (
                       <MicrosoftBrandIcon className="w-2.5 h-2.5 shrink-0" />

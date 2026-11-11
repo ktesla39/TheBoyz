@@ -23,6 +23,7 @@ export interface MicrosoftAccount {
   id: string;
   type: 'microsoft';
   username: string;
+  customDisplayName?: string;
   uuid: string;
   accessToken?: string;
   refreshToken?: string;

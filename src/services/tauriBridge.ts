@@ -213,8 +213,16 @@ export async function invokePingMinecraftServer(address: string): Promise<{
   return invokeTauri('ping_minecraft_server', { address });
 }
 
-export async function invokeCreateDesktopShortcut(instanceName: string, instanceId: string): Promise<string> {
-  return invokeTauri('create_desktop_shortcut', { instanceName, instanceId });
+export async function invokeCreateDesktopShortcut(
+  instanceName: string,
+  instanceId: string,
+  iconIcoBase64: string,
+): Promise<string> {
+  return invokeTauri('create_desktop_shortcut', { instanceName, instanceId, iconIcoBase64 });
+}
+
+export async function invokeGetStartupInstanceId(): Promise<string | null> {
+  return invokeTauri<string | null>('get_startup_instance_id');
 }
 
 export async function invokeStopGame(pid: number): Promise<boolean> {

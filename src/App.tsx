@@ -49,6 +49,7 @@ import { getRecommendedJavaVersion } from './services/mojangApi';
 import { refreshMicrosoftAccount } from './services/authService';
 import {
   invokeDetectJava,
+  invokeGetStartupInstanceId,
   invokeGetMicrosoftCredentials,
   invokeSaveMicrosoftCredentials,
   invokeClearMicrosoftCredentials,
@@ -76,6 +77,7 @@ export default function App() {
   const [activeInstanceId, setActiveInstanceId] = useState<string>(loadActiveInstanceId);
   const [accounts, setAccounts] = useState<LauncherAccount[]>(loadSavedAccounts);
   const [activeAccountId, setActiveAccountId] = useState<string>(loadActiveAccountId);
+  const [startupInstanceId, setStartupInstanceId] = useState<string | null>(null);
   const [servers, setServers] = useState<ServerBookmark[]>(loadSavedServers);
   const [inspectingInstanceId, setInspectingInstanceId] = useState<string | null>(null);
   const [settings, setSettings] = useState<LauncherSettings>(loadSettings);
@@ -513,6 +515,59 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    let active = true;
+    void invokeGetStartupInstanceId()
+      .then((instanceId) => {
+        if (active && instanceId) setStartupInstanceId(instanceId);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setLogs((current) => [...current, {
+          id: `shortcut_${Date.now()}`,
+          timestamp: new Date().toTimeString().split(' ')[0],
+          level: 'ERROR',
+          source: 'SYSTEM',
+          message: `Could not read the desktop shortcut launch request: ${reason instanceof Error ? reason.message : String(reason)}`,
+        }]);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!startupInstanceId || isLaunching || isGameRunning) return;
+    const requestedInstance = instances.find((instance) => instance.id === startupInstanceId);
+    if (!requestedInstance) {
+      setLogs((current) => [...current, {
+        id: `shortcut_${Date.now()}`,
+        timestamp: new Date().toTimeString().split(' ')[0],
+        level: 'ERROR',
+        source: 'SYSTEM',
+        message: 'The desktop shortcut refers to an instance that is no longer available.',
+      }]);
+      setStartupInstanceId(null);
+      return;
+    }
+
+    setActiveInstanceId(requestedInstance.id);
+    if (!activeAccount) {
+      setCurrentTab('accounts');
+      setLogs((current) => [...current, {
+        id: `shortcut_${Date.now()}`,
+        timestamp: new Date().toTimeString().split(' ')[0],
+        level: 'WARN',
+        source: 'SYSTEM',
+        message: 'Select an account before launching this desktop shortcut.',
+      }]);
+      setStartupInstanceId(null);
+      return;
+    }
+
+    setStartupInstanceId(null);
+    void handleLaunchGame(undefined, requestedInstance.id);
+  }, [startupInstanceId, instances, activeAccount, isLaunching, isGameRunning]);
+
   const handleStopGame = async () => {
     if (gamePid === null) return;
     try {
@@ -708,18 +763,20 @@ export default function App() {
     void add();
   };
 
-  const handleDeleteAccount = (id: string) => {
-    if (accounts.length <= 1) return;
+  const handleDeleteAccount = async (id: string) => {
     const accountToDelete = accounts.find((account) => account.id === id);
     if (accountToDelete?.type === 'microsoft' && isTauriEnvironment()) {
-      void invokeClearMicrosoftCredentials(accountToDelete.id).catch((reason) => {
-        console.error('Could not remove Microsoft credentials from Windows Credential Manager.', reason);
-      });
+      try {
+        await invokeClearMicrosoftCredentials(accountToDelete.id);
+      } catch (reason) {
+        window.alert(`Could not remove Microsoft credentials, so the account was not deleted. ${reason instanceof Error ? reason.message : String(reason)}`);
+        return;
+      }
     }
     const remaining = accounts.filter((a) => a.id !== id);
     setAccounts(remaining);
     if (activeAccountId === id) {
-      setActiveAccountId(remaining[0].id);
+      setActiveAccountId(remaining[0]?.id ?? '');
     }
   };
 

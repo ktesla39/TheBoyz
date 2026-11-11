@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import { MinecraftInstance } from '../../types/instance';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
+import {
+  invokeCreateDesktopShortcut,
+  isTauriEnvironment,
+} from '../../services/tauriBridge';
 
 interface DesktopShortcutModalProps {
   isOpen: boolean;
@@ -27,6 +31,9 @@ export const DesktopShortcutModal: React.FC<DesktopShortcutModalProps> = ({
 }) => {
   const [platform, setPlatform] = useState<'windows' | 'linux' | 'macos'>('windows');
   const [copied, setCopied] = useState(false);
+  const [creatingShortcut, setCreatingShortcut] = useState(false);
+  const [shortcutMessage, setShortcutMessage] = useState<string | null>(null);
+  const [shortcutError, setShortcutError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -35,7 +42,8 @@ export const DesktopShortcutModal: React.FC<DesktopShortcutModalProps> = ({
   const javaPath = instance.javaConfig.path.trim();
   const instanceDirectory = instance.customGameDir?.trim() ?? '';
   const jvmArgs = instance.javaConfig.jvmArguments.join(' ');
-  const canGenerateShortcut = Boolean(javaPath && instanceDirectory);
+  const createsNativeWindowsShortcut = platform === 'windows' && isTauriEnvironment();
+  const canGenerateShortcut = createsNativeWindowsShortcut || Boolean(javaPath && instanceDirectory);
 
   // Windows Batch Launcher (.bat)
   const windowsBatContent = `@echo off
@@ -83,10 +91,14 @@ cd "${instanceDirectory}" || exit 1
     switch (platform) {
       case 'windows':
         return {
-          filename: `Launch ${instanceName}.bat`,
-          content: windowsBatContent,
-          mime: 'text/plain',
-          instructions: 'Save this .bat file directly on your Desktop. Double-click it anytime to launch this instance directly with your configured JVM flags without opening launcher settings.',
+          filename: createsNativeWindowsShortcut
+            ? `Launch ${instanceName}.lnk`
+            : `Launch ${instanceName}.bat`,
+          content: createsNativeWindowsShortcut ? '' : windowsBatContent,
+          mime: createsNativeWindowsShortcut ? 'application/octet-stream' : 'text/plain',
+          instructions: createsNativeWindowsShortcut
+            ? 'Create a real Windows shortcut that opens this launcher and immediately starts the selected instance.'
+            : 'Save this .bat file on your Desktop. It uses the configured Java runtime and JVM flags.',
         };
       case 'linux':
         return {
@@ -117,7 +129,93 @@ cd "${instanceDirectory}" || exit 1
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const createIconIcoBase64 = async (): Promise<string> => {
+    const brand = document.querySelector<HTMLElement>('[data-launcher-brand-icon]');
+    if (!brand) throw new Error('Could not find the selected launcher icon. Reopen the shortcut dialog and try again.');
+
+    const svg = brand.querySelector('svg');
+    const customImage = brand.querySelector('img');
+    let source: string;
+    let objectUrl: string | null = null;
+    if (svg) {
+      const icon = svg.cloneNode(true) as SVGSVGElement;
+      icon.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      icon.setAttribute('width', '256');
+      icon.setAttribute('height', '256');
+      icon.removeAttribute('class');
+      objectUrl = URL.createObjectURL(new Blob(
+        [new XMLSerializer().serializeToString(icon)],
+        { type: 'image/svg+xml;charset=utf-8' },
+      ));
+      source = objectUrl;
+    } else if (customImage) {
+      source = customImage.currentSrc || customImage.src;
+    } else {
+      throw new Error('The selected launcher icon could not be rendered for the shortcut.');
+    }
+
+    try {
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.src = source;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not prepare the launcher icon image.');
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const png = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error('Could not encode the launcher icon image.'));
+        }, 'image/png');
+      });
+      const pngBytes = new Uint8Array(await png.arrayBuffer());
+      const ico = new Uint8Array(22 + pngBytes.length);
+      const view = new DataView(ico.buffer);
+      view.setUint16(0, 0, true);
+      view.setUint16(2, 1, true);
+      view.setUint16(4, 1, true);
+      ico[6] = 0;
+      ico[7] = 0;
+      ico[8] = 0;
+      ico[9] = 0;
+      view.setUint16(10, 1, true);
+      view.setUint16(12, 32, true);
+      view.setUint32(14, pngBytes.length, true);
+      view.setUint32(18, 22, true);
+      ico.set(pngBytes, 22);
+      let binary = '';
+      for (let offset = 0; offset < ico.length; offset += 0x8000) {
+        binary += String.fromCharCode(...ico.subarray(offset, offset + 0x8000));
+      }
+      return btoa(binary);
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  const handleCreateShortcut = async () => {
+    if (createsNativeWindowsShortcut) {
+      setCreatingShortcut(true);
+      setShortcutMessage(null);
+      setShortcutError(null);
+      try {
+        const iconIcoBase64 = await createIconIcoBase64();
+        const path = await invokeCreateDesktopShortcut(instance.name, instance.id, iconIcoBase64);
+        setShortcutMessage(`Shortcut created: ${path}`);
+      } catch (reason) {
+        setShortcutError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setCreatingShortcut(false);
+      }
+      return;
+    }
+    handleDownload();
   };
 
   const handleCopy = () => {
@@ -205,31 +303,48 @@ cd "${instanceDirectory}" || exit 1
           </div>
 
           {/* Code Preview Box */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-bold text-slate-300 font-mono flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Script Contents Preview</span>
-              </label>
-              <button
-                type="button"
-                onClick={handleCopy}
-                disabled={!canGenerateShortcut}
-                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 cursor-pointer disabled:opacity-40"
-              >
-                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                <span>{copied ? 'Copied!' : 'Copy Code'}</span>
-              </button>
+          {!createsNativeWindowsShortcut && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-slate-300 font-mono flex items-center gap-1.5">
+                  <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Script Contents Preview</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  disabled={!canGenerateShortcut}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                >
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  <span>{copied ? 'Copied!' : 'Copy Code'}</span>
+                </button>
+              </div>
+              <pre className="p-3.5 rounded-xl bg-[#080b11] border border-white/10 text-slate-300 font-mono text-[11px] leading-relaxed max-h-48 overflow-y-auto select-text break-anywhere">
+                {activeData.content}
+              </pre>
             </div>
-            <pre className="p-3.5 rounded-xl bg-[#080b11] border border-white/10 text-slate-300 font-mono text-[11px] leading-relaxed max-h-48 overflow-y-auto select-text break-anywhere">
-              {activeData.content}
-            </pre>
-          </div>
+          )}
 
           {/* Setup Instructions */}
           <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 font-mono">
             <strong>How to use:</strong> {activeData.instructions}
           </div>
+          {createsNativeWindowsShortcut && (
+            <p className="text-xs text-slate-400">
+              This shortcut will use the launcher icon selected in Settings.
+            </p>
+          )}
+          {shortcutMessage && (
+            <p className="break-all rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-300">
+              {shortcutMessage}
+            </p>
+          )}
+          {shortcutError && (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">
+              {shortcutError}
+            </p>
+          )}
           {!canGenerateShortcut && (
             <p className="text-xs text-amber-300">
               Configure a Java executable and instance directory before generating a shortcut.
@@ -252,12 +367,17 @@ cd "${instanceDirectory}" || exit 1
 
           <button
             type="button"
-            onClick={handleDownload}
-            disabled={!canGenerateShortcut}
+            onClick={() => void handleCreateShortcut()}
+            disabled={!canGenerateShortcut || creatingShortcut}
             className="btn-mc btn-mc-green flex items-center gap-2 px-5 py-2 text-white font-black text-xs rounded cursor-pointer font-display disabled:opacity-40"
           >
-            <Download className="w-4 h-4" />
-            <span>Download Desktop Shortcut</span>
+            {createsNativeWindowsShortcut ? <Monitor className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+            <span>{creatingShortcut
+              ? 'Creating…'
+              : createsNativeWindowsShortcut
+                ? 'Create Desktop Shortcut'
+                : 'Download Desktop Shortcut'}
+            </span>
           </button>
         </div>
       </div>

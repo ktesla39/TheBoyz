@@ -311,7 +311,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             </div>
             <div className="hidden sm:block text-left min-w-0">
               <div className="text-xs font-black text-slate-100 truncate max-w-[110px] font-display">
-                {activeAccount.username}
+                {activeAccount.customDisplayName || activeAccount.username}
               </div>
               <div className="text-[10px] text-slate-400 font-mono capitalize">
                 {activeAccount.type}

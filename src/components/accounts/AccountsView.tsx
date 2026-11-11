@@ -4,6 +4,8 @@ import {
   Plus,
   Trash2,
   Check,
+  Pencil,
+  X,
   Sparkles,
   Layers,
   Palette,
@@ -20,13 +22,19 @@ import {
   TheBoysEmblemIcon,
 } from '../icons/MinecraftIcons';
 import { playMinecraftClickSound } from '../../services/soundService';
+import {
+  generateOfflineUuid,
+  getElyBySkinUrl,
+  getMojangSkinUrl,
+  validateUsername,
+} from '../../services/authService';
 
 interface AccountsViewProps {
   accounts: LauncherAccount[];
   activeAccountId: string;
   onSelectActiveAccount: (id: string) => void;
   onAddAccount: (account: LauncherAccount) => void;
-  onDeleteAccount: (id: string) => void;
+  onDeleteAccount: (id: string) => void | Promise<void>;
   onUpdateAccount?: (account: LauncherAccount) => void;
 }
 
@@ -42,6 +50,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
   const [isAddMicrosoftOpen, setIsAddMicrosoftOpen] = useState(false);
   const [isSkinManagerOpen, setIsSkinManagerOpen] = useState(false);
   const [customizingAccount, setCustomizingAccount] = useState<LauncherAccount | null>(null);
+  const [editingAccount, setEditingAccount] = useState<LauncherAccount | null>(null);
+  const [editedName, setEditedName] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
 
   const activeAccount = accounts.find((a) => a.id === activeAccountId) ?? null;
 
@@ -68,6 +79,43 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       capeName: updated.capeName,
     };
     onUpdateAccount(updatedAcc);
+  };
+
+  const handleSaveAccountName = () => {
+    if (!editingAccount || !onUpdateAccount) return;
+    const name = editedName.trim();
+    if (!name) {
+      setEditError('Name cannot be empty.');
+      return;
+    }
+
+    if (editingAccount.type === 'offline') {
+      const validation = validateUsername(name);
+      if (!validation.valid) {
+        setEditError(validation.error ?? 'Invalid username.');
+        return;
+      }
+      onUpdateAccount({
+        ...editingAccount,
+        username: name,
+        uuid: editingAccount.uuid === generateOfflineUuid(editingAccount.username)
+          ? generateOfflineUuid(name)
+          : editingAccount.uuid,
+        skinUrl: editingAccount.skinProvider === 'ely.by'
+          ? getElyBySkinUrl(name)
+          : editingAccount.skinProvider === 'mojang'
+            ? getMojangSkinUrl(name)
+            : editingAccount.skinUrl,
+        customDisplayName: undefined,
+      });
+    } else {
+      onUpdateAccount({
+        ...editingAccount,
+        customDisplayName: name === editingAccount.username ? undefined : name,
+      });
+    }
+    setEditingAccount(null);
+    setEditError(null);
   };
 
   return (
@@ -118,7 +166,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 {/* Floating Minecraft Player Nametag */}
                 <div className="px-2.5 py-0.5 rounded bg-black/85 border border-white/20 text-white font-pixel text-[10px] shadow-md mb-1.5 flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span>{activeAccount.username}</span>
+                  <span>{activeAccount.customDisplayName || activeAccount.username}</span>
                 </div>
 
                 <div className="drop-shadow-[0_12px_24px_rgba(0,0,0,0.85)]">
@@ -145,7 +193,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
               <div className="space-y-2 text-center sm:text-left">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
                   <h3 className="text-xl font-black text-white font-display tracking-tight">
-                    {activeAccount.username}
+                    {activeAccount.customDisplayName || activeAccount.username}
                   </h3>
                   {activeAccount.type === 'microsoft' ? (
                     <span className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
@@ -159,6 +207,12 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     </span>
                   )}
                 </div>
+
+                {activeAccount.customDisplayName && (
+                  <p className="text-xs text-slate-400 font-mono">
+                    Minecraft username: {activeAccount.username}
+                  </p>
+                )}
 
                 <p className="text-xs text-slate-400 font-mono">
                   UUID: {activeAccount.uuid}
@@ -247,7 +301,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-white font-display truncate">
-                        {account.username}
+                        {account.customDisplayName || account.username}
                       </span>
                       {account.type === 'microsoft' ? (
                         <span className="text-[9px] text-emerald-400 font-bold font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
@@ -259,6 +313,11 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                         </span>
                       )}
                     </div>
+                    {account.customDisplayName && (
+                      <p className="text-[9px] text-slate-500 font-mono truncate">
+                        Minecraft: {account.username}
+                      </p>
+                    )}
                     <p className="text-[10px] text-slate-500 font-mono truncate max-w-[180px]">
                       {account.uuid}
                     </p>
@@ -266,6 +325,23 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {onUpdateAccount && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingAccount(account);
+                        setEditedName(account.type === 'microsoft'
+                          ? account.customDisplayName || account.username
+                          : account.username);
+                        setEditError(null);
+                      }}
+                      className="btn-mc py-1 px-2 text-[11px] font-bold text-slate-300 hover:text-white rounded cursor-pointer"
+                      title={account.type === 'microsoft' ? 'Change local display name' : 'Change username'}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -297,20 +373,21 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     </button>
                   )}
 
-                  {accounts.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        playMinecraftClickSound();
-                        onDeleteAccount(account.id);
-                      }}
-                      className="p-1.5 text-slate-500 hover:text-red-400 rounded hover:bg-white/5 transition-colors cursor-pointer"
-                      title="Remove account"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playMinecraftClickSound();
+                      if (window.confirm(`Delete ${account.customDisplayName || account.username} from this launcher?`)) {
+                        void onDeleteAccount(account.id);
+                      }
+                    }}
+                    className="p-1.5 text-slate-500 hover:text-red-400 rounded hover:bg-white/5 transition-colors cursor-pointer"
+                    title="Delete account"
+                    aria-label={`Delete ${account.customDisplayName || account.username}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             );
@@ -336,6 +413,59 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           onSelectActiveAccount(acc.id);
         }}
       />
+
+      {editingAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleSaveAccountName();
+            }}
+            className="card-obsidian w-full max-w-sm rounded-2xl border border-white/10 p-5 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white font-display">
+                {editingAccount.type === 'microsoft' ? 'Change display name' : 'Change username'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingAccount(null)}
+                className="p-1 text-slate-400 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label className="block text-xs text-slate-300 font-display">
+              {editingAccount.type === 'microsoft' ? 'Local display name' : 'Minecraft username'}
+              <input
+                autoFocus
+                value={editedName}
+                maxLength={editingAccount.type === 'microsoft' ? 32 : 16}
+                onChange={(event) => {
+                  setEditedName(event.target.value);
+                  setEditError(null);
+                }}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm text-white focus:border-[var(--mc-accent)] focus:outline-none"
+              />
+            </label>
+            {editingAccount.type === 'microsoft' && (
+              <p className="text-[11px] text-slate-400">
+                This only changes the name shown in the launcher. Your Microsoft/Minecraft username stays unchanged.
+              </p>
+            )}
+            {editError && <p className="text-xs text-red-400">{editError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setEditingAccount(null)} className="btn-mc px-3 py-2 text-xs text-slate-300 rounded">
+                Cancel
+              </button>
+              <button type="submit" className="btn-mc btn-mc-green px-3 py-2 text-xs font-bold text-white rounded">
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {customizingAccount && (
         <SkinManagerModal
