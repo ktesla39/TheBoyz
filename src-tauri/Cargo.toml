@@ -1,6 +1,6 @@
 [package]
 name = "the-boys-launcher"
-version = "1.1.1"
+version = "1.1.2"
 description = "A Next-Generation Minecraft Launcher Built with Rust, Tauri, React & TypeScript"
 authors = ["ktesla"]
 edition = "2021"

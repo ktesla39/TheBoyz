@@ -100,47 +100,8 @@ const features = [
   },
 ];
 
-const screenshots = [
-  {
-    id: 'dashboard',
-    title: 'Next-Gen Command Dashboard',
-    tag: 'Home View & Play Launch',
-    copy: 'Live hardware readiness, Java runtime detection, atmospheric theme presets, and authentic Bedrock tactile controls.',
-    image: `${import.meta.env.BASE_URL}assets/aistudio/image_f4491d8f.png`,
-  },
-  {
-    id: 'instances',
-    title: 'Multi-World Instance Isolation',
-    tag: 'Instance Manager',
-    copy: 'Keep Vanilla, Fabric, Forge, NeoForge, and Quilt completely separated with dedicated mod directories and RAM allocation.',
-    image: `${import.meta.env.BASE_URL}assets/aistudio/image_5910ea28.png`,
-  },
-  {
-    id: 'addons',
-    title: 'Dual Modrinth & CurseForge Discovery',
-    tag: 'Addons & Modpacks',
-    copy: 'Integrated 20-per-page catalog browser with filters for shaders, resource packs, and mods with 1-click in-page downloads.',
-    image: `${import.meta.env.BASE_URL}assets/aistudio/image_7e822be7.png`,
-  },
-  {
-    id: 'skin',
-    title: 'Interactive 3D Skin & Cape Studio',
-    tag: 'Skin Customization',
-    copy: '360° interactive rotation, official Microsoft Online authentication, offline profiles, and Ely.by custom cloaks support.',
-    image: `${import.meta.env.BASE_URL}assets/aistudio/image_c41cdbdc.png`,
-  },
-  {
-    id: 'console',
-    title: 'Tactile Bedrock Bevels & Live Logs',
-    tag: 'Runtime Diagnostics',
-    copy: 'Live Minecraft game terminal logs, dedicated process controls, crash triage, and instant desktop shortcuts.',
-    image: `${import.meta.env.BASE_URL}assets/aistudio/image_f54a3104.png`,
-  },
-];
-
 function App() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeScreenshot, setActiveScreenshot] = useState(0);
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     window.localStorage.getItem('the-boys-website-theme') === 'light' ? 'light' : 'dark',
   );
@@ -261,7 +222,6 @@ function App() {
         </button>
         <nav className={menuOpen ? 'nav-links is-open' : 'nav-links'}>
           <a href="#features" onClick={closeMenu}>Features</a>
-          <a href="#screenshots" onClick={closeMenu}>Screenshots</a>
           <a href="#how-it-works" onClick={closeMenu}>How it works</a>
           <a href="#faq" onClick={closeMenu}>FAQ</a>
           <button
@@ -362,63 +322,6 @@ function App() {
               <p>{copy}</p>
               <span className="card-corner" />
             </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="gallery-section section-wrap" id="screenshots">
-        <div className="section-heading">
-          <div className="eyebrow">TAKE A LOOK INSIDE</div>
-          <h2>Crafted for clarity.<br /><span>Built for play.</span></h2>
-          <p>Explore real screenshots of The Boys Client in action — from world creation to mod discovery.</p>
-        </div>
-
-        {/* Tab Switcher */}
-        <div className="gallery-nav" role="tablist" aria-label="Screenshots tabs">
-          {screenshots.map((s, idx) => (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={activeScreenshot === idx}
-              onClick={() => setActiveScreenshot(idx)}
-              className={`gallery-tab ${activeScreenshot === idx ? 'is-active' : ''}`}
-            >
-              {s.title}
-            </button>
-          ))}
-        </div>
-
-        {/* Featured Screenshot Display Frame */}
-        <div className="gallery-display">
-          <div className="gallery-display-bar">
-            <span>THE BOYS — {screenshots[activeScreenshot].tag.toUpperCase()}</span>
-            <span>{activeScreenshot + 1} / {screenshots.length}</span>
-          </div>
-          <img
-            src={screenshots[activeScreenshot].image}
-            alt={screenshots[activeScreenshot].title}
-            loading="lazy"
-          />
-          <div className="gallery-info">
-            <span className="eyebrow">{screenshots[activeScreenshot].tag}</span>
-            <h3>{screenshots[activeScreenshot].title}</h3>
-            <p>{screenshots[activeScreenshot].copy}</p>
-          </div>
-        </div>
-
-        {/* Thumbnails row */}
-        <div className="gallery-thumbs" aria-label="Screenshot thumbnails">
-          {screenshots.map((s, idx) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setActiveScreenshot(idx)}
-              className={`gallery-thumb ${activeScreenshot === idx ? 'is-active' : ''}`}
-              title={s.title}
-            >
-              <img src={s.image} alt={s.title} loading="lazy" />
-            </button>
           ))}
         </div>
       </section>
