@@ -58,9 +58,13 @@ export const LiveConsoleModal: React.FC<LiveConsoleModalProps> = ({
 
   const handleCopyLogs = () => {
     const fullText = logs.map((l) => `[${l.timestamp}] [${l.source}/${l.level}]: ${l.message}`).join('\n');
-    navigator.clipboard.writeText(fullText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard
+      .writeText(fullText)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch((reason) => console.error('Could not copy the log to the clipboard.', reason));
   };
 
   const handleExportLogFile = () => {
@@ -70,8 +74,10 @@ export const LiveConsoleModal: React.FC<LiveConsoleModalProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `latest-${Date.now()}.log`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   const hasCrash = logs.some((l) => l.level === 'ERROR');

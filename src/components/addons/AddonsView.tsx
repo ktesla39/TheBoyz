@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Package,
   Search,
@@ -31,6 +31,10 @@ import {
   invokeInstallInstanceModpack,
   invokeListInstanceMods,
   invokeListInstanceAddons,
+  invokeToggleModFile,
+  invokeDeleteModFile,
+  invokeToggleInstanceAddon,
+  invokeDeleteInstanceAddon,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
@@ -108,7 +112,8 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   const availableVersions = useMemo(
     () => Array.from(new Set(catalogProvider === 'modrinth'
       ? modrinthResults.flatMap((result) => result.versions)
-      : curseForgeResults.flatMap((result) => result.gameVersions))).sort(),
+      : curseForgeResults.flatMap((result) => result.gameVersions)))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })),
     [catalogProvider, modrinthResults, curseForgeResults]
   );
 
@@ -128,9 +133,17 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
     setSelectedInstanceId(activeInstance?.id ?? '');
   }, [activeInstance?.id]);
 
+  const notificationTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (notificationTimerRef.current !== null) window.clearTimeout(notificationTimerRef.current);
+  }, []);
   const showNotification = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3500);
+    if (notificationTimerRef.current !== null) window.clearTimeout(notificationTimerRef.current);
+    notificationTimerRef.current = window.setTimeout(() => {
+      notificationTimerRef.current = null;
+      setNotification(null);
+    }, 3500);
   };
 
   const targetInstance = useMemo(
@@ -147,8 +160,11 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   }, [searchQuery, category, loaderFilter, versionFilter, sortBy]);
 
   // Fetch results from the live Modrinth catalog.
+  const searchRequestIdRef = useRef(0);
   const performSearch = async () => {
     if (viewMode !== 'browse') return;
+    const requestId = ++searchRequestIdRef.current;
+    const isStale = () => requestId !== searchRequestIdRef.current;
     setLoading(true);
     setSearchError(null);
 
@@ -169,7 +185,9 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
           index: (currentPage - 1) * 20,
           pageSize: 20,
         });
+        if (isStale()) return;
         setCurseForgeResults(result.data);
+        setModrinthResults([]);
         setTotalHits(result.totalCount);
         return;
       }
@@ -186,13 +204,15 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
         limit: 20,
         offset,
       });
+      if (isStale()) return;
       setModrinthResults(res.hits);
       setCurseForgeResults([]);
       setTotalHits(res.total_hits);
     } catch (err) {
+      if (isStale()) return;
       setSearchError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   };
 
@@ -217,7 +237,8 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
       author: r.author,
       downloads: r.downloads,
       follows: r.follows,
-      gameVersions: r.versions ?? [],
+      // Modrinth lists versions oldest-first; show/default to the newest.
+      gameVersions: [...(r.versions ?? [])].reverse(),
       loaders: r.categories.filter((c) =>
         ['fabric', 'forge', 'neoforge', 'quilt', 'liteloader'].includes(c.toLowerCase())
       ),
@@ -290,12 +311,12 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   ) => {
     if (addon.type === 'modpack' && !providedInstance) {
       showNotification('Modpacks must be installed into a dedicated new instance.');
-      return;
+      throw new Error('Modpacks must be installed into a dedicated new instance.');
     }
     const inst = providedInstance ?? instances.find((i) => i.id === chosenInstanceId);
     if (!inst) {
       showNotification('Select an existing instance before installing.');
-      return;
+      throw new Error('Select an existing instance before installing.');
     }
     if (addon.type === 'modpack' && !isTauriEnvironment()) {
       showNotification('Modpack installation is available in the desktop launcher.');
@@ -388,13 +409,19 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
           source: addon.source,
           modrinthId: addon.source === 'modrinth' ? String(addon.id) : undefined,
         };
-        onUpdateInstance({ ...inst, mods: [...inst.mods, newMod] });
+        onUpdateInstance({
+          ...inst,
+          mods: [
+            ...inst.mods.filter((mod) => mod.id !== newMod.id && mod.filename !== newMod.filename),
+            newMod,
+          ],
+        });
       }
       playMinecraftLevelUpSound();
       showNotification(`Installed ${addon.name} to ${inst.name}!`);
     } catch (err) {
       showNotification(`Failed to install ${addon.name}: ${err instanceof Error ? err.message : String(err)}`);
-      if (providedInstance) throw err;
+      throw err;
     }
   };
 
@@ -544,46 +571,87 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
   };
 
   // Toggle mod in inventory
-  const handleToggleMod = (modId: string) => {
+  const handleToggleMod = async (modId: string) => {
     if (!targetInstance) return;
+    const mod = targetInstance.mods.find((m) => m.id === modId);
+    if (!mod) return;
     playMinecraftClickSound();
-    const updated = targetInstance.mods.map((m) =>
-      m.id === modId ? { ...m, enabled: !m.enabled } : m
-    );
-    onUpdateInstance({ ...targetInstance, mods: updated });
+    const enabled = !mod.enabled;
+    try {
+      const actualEnabled = !mod.filename.toLowerCase().endsWith('.disabled');
+      const filename = isTauriEnvironment() && actualEnabled !== enabled
+        ? await invokeToggleModFile(targetInstance.id, mod.filename, enabled, targetInstance.customGameDir)
+        : mod.filename;
+      onUpdateInstance({
+        ...targetInstance,
+        mods: targetInstance.mods.map((m) => (m.id === modId ? { ...m, enabled, filename } : m)),
+      });
+    } catch (reason) {
+      showNotification(`Could not toggle ${mod.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Delete mod from inventory
-  const handleDeleteMod = (modId: string) => {
+  const handleDeleteMod = async (modId: string) => {
     if (!targetInstance) return;
+    const mod = targetInstance.mods.find((m) => m.id === modId);
+    if (!mod) return;
     playMinecraftClickSound();
-    const updated = targetInstance.mods.filter((m) => m.id !== modId);
-    onUpdateInstance({ ...targetInstance, mods: updated });
-    showNotification('Mod removed from instance inventory.');
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteModFile(targetInstance.id, mod.filename, targetInstance.customGameDir);
+      }
+      onUpdateInstance({ ...targetInstance, mods: targetInstance.mods.filter((m) => m.id !== modId) });
+      showNotification(`Deleted ${mod.name} from the instance.`);
+    } catch (reason) {
+      showNotification(`Could not delete ${mod.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Toggle pack in inventory
-  const handleTogglePack = (packId: string) => {
+  const handleTogglePack = async (packId: string) => {
     if (!targetInstance) return;
+    const pack = targetInstance.packs.find((p) => p.id === packId);
+    if (!pack) return;
     playMinecraftClickSound();
-    const updated = targetInstance.packs.map((p) =>
-      p.id === packId ? { ...p, enabled: !p.enabled } : p
-    );
-    onUpdateInstance({ ...targetInstance, packs: updated });
+    const enabled = !pack.enabled;
+    try {
+      const actualEnabled = !pack.filename.toLowerCase().endsWith('.disabled');
+      const filename = isTauriEnvironment() && actualEnabled !== enabled
+        ? await invokeToggleInstanceAddon(targetInstance.id, pack.type, pack.filename, enabled, targetInstance.customGameDir)
+        : pack.filename;
+      onUpdateInstance({
+        ...targetInstance,
+        packs: targetInstance.packs.map((p) => (p.id === packId ? { ...p, enabled, filename } : p)),
+      });
+    } catch (reason) {
+      showNotification(`Could not toggle ${pack.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Delete pack from inventory
-  const handleDeletePack = (packId: string) => {
+  const handleDeletePack = async (packId: string) => {
     if (!targetInstance) return;
+    const pack = targetInstance.packs.find((p) => p.id === packId);
+    if (!pack) return;
     playMinecraftClickSound();
-    const updated = targetInstance.packs.filter((p) => p.id !== packId);
-    onUpdateInstance({ ...targetInstance, packs: updated });
-    showNotification('Pack removed from instance inventory.');
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteInstanceAddon(targetInstance.id, pack.type, pack.filename, targetInstance.customGameDir);
+      }
+      onUpdateInstance({ ...targetInstance, packs: targetInstance.packs.filter((p) => p.id !== packId) });
+      showNotification(`Deleted ${pack.name} from the instance.`);
+    } catch (reason) {
+      showNotification(`Could not delete ${pack.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Move pack order
-  const handleMovePack = (index: number, direction: 'up' | 'down') => {
+  const handleMovePack = (packId: string, direction: 'up' | 'down') => {
     if (!targetInstance) return;
+    // The visible list may be filtered/searched, so resolve the real position by id.
+    const index = targetInstance.packs.findIndex((p) => p.id === packId);
+    if (index === -1) return;
     const packs = [...targetInstance.packs];
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= packs.length) return;
@@ -591,8 +659,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
     const temp = packs[index];
     packs[index] = packs[targetIdx];
     packs[targetIdx] = temp;
-    packs.forEach((p, i) => (p.order = i));
-    onUpdateInstance({ ...targetInstance, packs });
+    onUpdateInstance({ ...targetInstance, packs: packs.map((p, i) => ({ ...p, order: i })) });
   };
 
   // Import local JAR or ZIP file
@@ -970,7 +1037,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                     <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                       <button
                         type="button"
-                        onClick={() => handleMovePack(idx, 'up')}
+                        onClick={() => handleMovePack(pack.id, 'up')}
                         disabled={idx === 0}
                         className="btn-mc p-1.5 rounded text-slate-300 disabled:opacity-30 cursor-pointer"
                         title="Move Up"
@@ -979,7 +1046,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleMovePack(idx, 'down')}
+                        onClick={() => handleMovePack(pack.id, 'down')}
                         disabled={idx === filteredInstalledPacks.length - 1}
                         className="btn-mc p-1.5 rounded text-slate-300 disabled:opacity-30 cursor-pointer"
                         title="Move Down"
@@ -1245,7 +1312,7 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
             </div>
           ) : searchError ? (
             <div role="alert" className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-300">
-              Modrinth search failed: {searchError}
+              Search failed: {searchError}
             </div>
           ) : activeAddonList.length === 0 ? (
             <div className="p-12 text-center rounded-2xl border border-white/10 bg-black/30 space-y-2">
@@ -1278,7 +1345,12 @@ export const AddonsView: React.FC<AddonsViewProps> = ({
                     : false;
 
                   const isCompatible = targetInstance
-                    ? addon.gameVersions.some((v) => v.startsWith(targetInstance.gameVersion.slice(0, 4)))
+                    ? addon.gameVersions.some((v) => {
+                        if (v === targetInstance.gameVersion) return true;
+                        const [vMajor, vMinor] = v.split('.');
+                        const [iMajor, iMinor] = targetInstance.gameVersion.split('.');
+                        return vMinor !== undefined && vMajor === iMajor && vMinor === iMinor;
+                      })
                     : true;
                   const selectionKey = `${addon.source}:${addon.id}`;
                   const isSelected = selectedAddons.some(

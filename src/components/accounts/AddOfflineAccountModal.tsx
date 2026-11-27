@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Check, RefreshCw, Upload, Globe, Sparkles } from 'lucide-react';
 import {
   createOfflineProfile,
@@ -31,6 +31,18 @@ export const AddOfflineAccountModal: React.FC<AddOfflineAccountModalProps> = ({
   const [customSkinUrl, setCustomSkinUrl] = useState('');
   const [customUuid, setCustomUuid] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // The modal stays mounted while closed; start every session with a clean form.
+  useEffect(() => {
+    if (!isOpen) return;
+    setUsername('');
+    setCustomDisplayName('');
+    setSkinProvider('ely.by');
+    setModel('classic');
+    setCustomSkinUrl('');
+    setCustomUuid('');
+    setError(null);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

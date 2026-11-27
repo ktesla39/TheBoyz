@@ -46,7 +46,7 @@ export interface MinecraftWorld {
   id: string;
   name: string;
   folderName: string;
-  gameMode: 'survival' | 'creative' | 'hardcore' | 'adventure';
+  gameMode: 'survival' | 'creative' | 'hardcore' | 'adventure' | 'unknown';
   difficulty?: 'peaceful' | 'easy' | 'normal' | 'hard';
   lastPlayed: number;
   sizeMb: number;

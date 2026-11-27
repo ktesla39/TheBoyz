@@ -57,7 +57,7 @@ export const JavaConfigView: React.FC<JavaConfigViewProps> = ({
       setGc('ZGC');
       setMinRam(4096);
       setMaxRam(8192);
-      setCustomArgs('-XX:+UseZGC -XX:+ZGenerational -XX:+AlwaysPreTouch -XX:+UnlockExperimentalVMOptions');
+      setCustomArgs('-XX:+UseZGC -XX:+AlwaysPreTouch -XX:+UnlockExperimentalVMOptions');
     } else if (preset === 'potato') {
       setGc('G1GC');
       setMinRam(768);

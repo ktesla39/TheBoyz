@@ -28,9 +28,20 @@ export const MicrosoftLoginModal: React.FC<MicrosoftLoginModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [listeningPort, setListeningPort] = useState<number>(28420);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const loopbackRequestIdRef = useRef(0);
+  // Parents usually pass inline callbacks. Keep the latest ones in refs so a parent
+  // re-render never restarts an in-flight sign-in (which would reopen the browser and
+  // collide with the loopback listener that is still bound to the port).
+  const onAccountAddedRef = useRef(onAccountAdded);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onAccountAddedRef.current = onAccountAdded;
+    onCloseRef.current = onClose;
+  });
 
   // Start Browser Loopback Flow
   const startLoopbackFlow = useCallback(async () => {
+    const requestId = ++loopbackRequestIdRef.current;
     setError(null);
     setLoading(true);
     setAuthenticating(true);
@@ -38,16 +49,21 @@ export const MicrosoftLoginModal: React.FC<MicrosoftLoginModalProps> = ({
     try {
       const clientId = requireMicrosoftClientId();
       const account = await invokeLoginWithMicrosoftLoopback(clientId, listeningPort);
+      if (requestId !== loopbackRequestIdRef.current) return;
       playMinecraftLevelUpSound();
-      onAccountAdded(account as MicrosoftAccount);
-      onClose();
+      onAccountAddedRef.current(account as MicrosoftAccount);
+      onCloseRef.current();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (requestId === loopbackRequestIdRef.current) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
-      setLoading(false);
-      setAuthenticating(false);
+      if (requestId === loopbackRequestIdRef.current) {
+        setLoading(false);
+        setAuthenticating(false);
+      }
     }
-  }, [listeningPort, onAccountAdded, onClose]);
+  }, [listeningPort]);
 
   // Start Device Code Flow
   const startDeviceCodeFlow = useCallback(async () => {
@@ -72,8 +88,8 @@ export const MicrosoftLoginModal: React.FC<MicrosoftLoginModalProps> = ({
       const account = await completeMicrosoftLogin(code, controller.signal);
       if (controller.signal.aborted) return;
       playMinecraftLevelUpSound();
-      onAccountAdded(account);
-      onClose();
+      onAccountAddedRef.current(account);
+      onCloseRef.current();
     } catch (reason) {
       if (!controller.signal.aborted) {
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -84,7 +100,7 @@ export const MicrosoftLoginModal: React.FC<MicrosoftLoginModalProps> = ({
         setAuthenticating(false);
       }
     }
-  }, [onAccountAdded, onClose]);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -101,6 +117,7 @@ export const MicrosoftLoginModal: React.FC<MicrosoftLoginModalProps> = ({
     }
 
     return () => {
+      loopbackRequestIdRef.current += 1;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }

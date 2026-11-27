@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Plus,
   Play,
@@ -26,6 +26,7 @@ import {
 } from '../icons/MinecraftIcons';
 import { InstanceCircleLogo } from './InstanceCircleLogo';
 import { playMinecraftClickSound } from '../../services/soundService';
+import { invokeListInstanceAddons, isTauriEnvironment } from '../../services/tauriBridge';
 
 interface InstancesViewProps {
   instances: MinecraftInstance[];
@@ -62,6 +63,49 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
   const [editModalInstance, setEditModalInstance] = useState<MinecraftInstance | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [inventoryCounts, setInventoryCounts] = useState<Record<string, { mods: number; packs: number }>>({});
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const instanceDirectoryKey = instances
+    .map((instance) => `${instance.id}:${instance.customGameDir ?? ''}`)
+    .join('|');
+
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    let active = true;
+    void Promise.all(instances.map(async (instance) => {
+      try {
+        const addons = await invokeListInstanceAddons(instance.id, instance.customGameDir);
+        return {
+          id: instance.id,
+          counts: {
+            mods: addons.filter((addon) => addon.addon_type === 'mod' && addon.enabled).length,
+            packs: addons.filter((addon) => addon.addon_type !== 'mod').length,
+          },
+        };
+      } catch (reason) {
+        return {
+          id: instance.id,
+          error: `Could not refresh addons for "${instance.name}": ${reason instanceof Error ? reason.message : String(reason)}`,
+        };
+      }
+    })).then((results) => {
+      if (!active) return;
+      const counts: Record<string, { mods: number; packs: number }> = {};
+      const errors: string[] = [];
+      for (const result of results) {
+        if ('counts' in result && result.counts) {
+          counts[result.id] = result.counts;
+        } else if ('error' in result) {
+          errors.push(result.error);
+        }
+      }
+      setInventoryCounts(counts);
+      setInventoryError(errors.length ? errors.join(' ') : null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [instanceDirectoryKey]);
 
   const handleImportInstance = async () => {
     setImportError(null);
@@ -133,6 +177,11 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
           {importError}
         </div>
       )}
+      {inventoryError && (
+        <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+          {inventoryError}
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -173,7 +222,9 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredInstances.map((inst) => {
           const isActive = inst.id === activeInstanceId;
-          const activeModsCount = inst.mods.filter((m) => m.enabled).length;
+          const activeModsCount = inventoryCounts[inst.id]?.mods
+            ?? inst.mods.filter((mod) => mod.enabled).length;
+          const installedPacksCount = inventoryCounts[inst.id]?.packs ?? (inst.packs || []).length;
 
           return (
             <div
@@ -262,7 +313,7 @@ export const InstancesView: React.FC<InstancesViewProps> = ({
                   </div>
                   <div className="truncate">
                     <div className="uppercase text-slate-400 text-[9px]">Packs</div>
-                    <div className="text-slate-200 font-bold mt-0.5 truncate">{(inst.packs || []).length} installed</div>
+                    <div className="text-slate-200 font-bold mt-0.5 truncate">{installedPacksCount} installed</div>
                   </div>
                 </div>
               </div>

@@ -39,52 +39,46 @@ export const DesktopShortcutModal: React.FC<DesktopShortcutModalProps> = ({
 
   const instanceId = instance.id;
   const instanceName = instance.name.replace(/[^\w\s-]/g, '').trim();
-  const javaPath = instance.javaConfig.path.trim();
-  const instanceDirectory = instance.customGameDir?.trim() ?? '';
-  const jvmArgs = instance.javaConfig.jvmArguments.join(' ');
   const createsNativeWindowsShortcut = platform === 'windows' && isTauriEnvironment();
-  const canGenerateShortcut = createsNativeWindowsShortcut || Boolean(javaPath && instanceDirectory);
+  // Generated scripts hand the instance to the launcher itself (it owns the classpath, auth and
+  // natives, so `java -jar client.jar` can never start a modern Minecraft install).
+  const canGenerateShortcut = true;
+  const safeDisplayName = instance.name.replace(/[\r\n]+/g, ' ');
 
   // Windows Batch Launcher (.bat)
   const windowsBatContent = `@echo off
-title The Boys Launcher - Starting ${instance.name}
-echo ===================================================
-echo   THE BOYS MINECRAFT LAUNCHER - INSTANT LAUNCHER
-echo   Launching Instance: ${instance.name}
-echo   Minecraft: ${instance.gameVersion} (${instance.loader.toUpperCase()})
-echo ===================================================
-echo Allocating ${instance.javaConfig.maxMemoryMb}MB RAM...
-
-set JAVA_BIN="${javaPath}"
-set MIN_RAM=${instance.javaConfig.minMemoryMb}M
-set MAX_RAM=${instance.javaConfig.maxMemoryMb}M
-set JVM_ARGS=${jvmArgs}
-
-start "" %JAVA_BIN% -Xms%MIN_RAM% -Xmx%MAX_RAM% %JVM_ARGS% -Dminecraft.launcher.brand=TheBoys -Dminecraft.instance=${instanceId} -jar "${instanceDirectory}\\client.jar"
-
-echo Java process started; this shortcut does not monitor its exit status.
-timeout /t 3 >nul
-exit
+rem Point LAUNCHER at the installed launcher executable before using this file.
+set "LAUNCHER=C:\\Program Files\\The Boys\\The Boys.exe"
+if not exist "%LAUNCHER%" (
+  echo Edit this file and set LAUNCHER to the full path of The Boys launcher.
+  pause
+  exit /b 1
+)
+start "" "%LAUNCHER%" --launch-instance ${instanceId}
 `;
 
   // Linux / Steam Deck Desktop Shortcut (.desktop)
   const linuxDesktopContent = `[Desktop Entry]
-Name=${instance.name} (Minecraft ${instance.gameVersion})
-Comment=Launch ${instance.name} using The Boys Next-Gen Minecraft Launcher
-Exec=sh -c '"${javaPath}" -Xms${instance.javaConfig.minMemoryMb}M -Xmx${instance.javaConfig.maxMemoryMb}M ${jvmArgs} -jar "${instanceDirectory}/client.jar"'
+Name=${safeDisplayName} (Minecraft ${instance.gameVersion})
+Comment=Launch ${safeDisplayName} using The Boys launcher
+# Replace /opt/the-boys/the-boys with the real path of the launcher executable.
+Exec="/opt/the-boys/the-boys" --launch-instance ${instanceId}
 Icon=minecraft
 Terminal=false
 Type=Application
-Categories=Game;Simulation;
+Categories=Game;
 StartupNotify=true
 `;
 
   // macOS / Unix Script (.command)
   const macosCommandContent = `#!/bin/bash
-# The Boys Minecraft Launcher - Instant Game Launch Script
-echo "Launching ${instance.name} (Minecraft ${instance.gameVersion})..."
-cd "${instanceDirectory}" || exit 1
-"${javaPath}" -Xms${instance.javaConfig.minMemoryMb}M -Xmx${instance.javaConfig.maxMemoryMb}M ${jvmArgs} -jar "${instanceDirectory}/client.jar"
+# Replace this path with the real location of the launcher executable if it differs.
+LAUNCHER="/Applications/The Boys.app/Contents/MacOS/The Boys"
+if [ ! -x "$LAUNCHER" ]; then
+  echo "Edit this script and set LAUNCHER to the launcher executable."
+  exit 1
+fi
+"$LAUNCHER" --launch-instance ${instanceId} &
 `;
 
   const getActiveContent = () => {
@@ -98,7 +92,7 @@ cd "${instanceDirectory}" || exit 1
           mime: createsNativeWindowsShortcut ? 'application/octet-stream' : 'text/plain',
           instructions: createsNativeWindowsShortcut
             ? 'Create a real Windows shortcut that opens this launcher and immediately starts the selected instance.'
-            : 'Save this .bat file on your Desktop. It uses the configured Java runtime and JVM flags.',
+            : 'Save this .bat file on your Desktop and set LAUNCHER to your launcher executable. It opens the launcher and starts this instance.',
         };
       case 'linux':
         return {

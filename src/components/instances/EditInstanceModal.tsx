@@ -129,13 +129,18 @@ export const EditInstanceModal: React.FC<EditInstanceModalProps> = ({
       ...instance,
       name: name.trim() || instance.name,
       loader,
+      // A pinned loader version only fits the loader and Minecraft version it was chosen for.
+      loaderVersion:
+        loader === instance.loader && (gameVersion || instance.gameVersion) === instance.gameVersion
+          ? instance.loaderVersion
+          : undefined,
       gameVersion: gameVersion || instance.gameVersion,
       icon: icon || 'grass_block',
       graphicsApi,
       javaConfig: {
         ...instance.javaConfig,
         version: recommendedJava,
-        maxMemoryMb: Number(maxMemoryMb) || 4096,
+        maxMemoryMb: Math.max(Number(maxMemoryMb) || 4096, Number(minMemoryMb) || 0),
         minMemoryMb: Number(minMemoryMb) || 2048,
       },
     };

@@ -125,11 +125,11 @@ export const ALEX_SKIN_TEXTURE =
 
 /**
  * Returns skin URL for Ely.by skinsystem
- * Ely.by provides textures via http://skinsystem.ely.by/textures/<username>
+ * Ely.by serves the skin PNG at http://skinsystem.ely.by/skins/<username>.png
  */
 export function getElyBySkinUrl(username: string): string {
   const clean = username.trim();
-  return `http://skinsystem.ely.by/textures/${encodeURIComponent(clean)}`;
+  return `http://skinsystem.ely.by/skins/${encodeURIComponent(clean)}.png`;
 }
 
 /**
@@ -137,7 +137,7 @@ export function getElyBySkinUrl(username: string): string {
  */
 export function getElyByCapeUrl(username: string): string {
   const clean = username.trim();
-  return `http://skinsystem.ely.by/cloaks/${encodeURIComponent(clean)}`;
+  return `http://skinsystem.ely.by/cloaks/${encodeURIComponent(clean)}.png`;
 }
 
 /**
@@ -161,7 +161,16 @@ export function createOfflineProfile(
     displayName?: string;
   }
 ): OfflineProfile {
-  const uuid = options.uuid?.trim() || generateOfflineUuid(username.trim());
+  const customUuid = options.uuid?.trim();
+  if (
+    customUuid &&
+    !/^[0-9a-f]{32}$/i.test(customUuid) &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customUuid)
+  ) {
+    // Minecraft refuses to start with a malformed --uuid value.
+    throw new Error('The UUID must be 32 hexadecimal characters, optionally with dashes (8-4-4-4-12).');
+  }
+  const uuid = customUuid || generateOfflineUuid(username.trim());
   const resolvedSkinUrl = options.skinUrl ??
     (options.skinProvider === 'ely.by'
       ? getElyBySkinUrl(username)

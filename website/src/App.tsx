@@ -102,9 +102,13 @@ const features = [
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    window.localStorage.getItem('the-boys-website-theme') === 'light' ? 'light' : 'dark',
-  );
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      return window.localStorage.getItem('the-boys-website-theme') === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark'; // storage can be blocked (private mode, strict privacy settings)
+    }
+  });
   const [downloadState, setDownloadState] = useState<DownloadState>({ status: 'loading' });
   const closeMenu = () => setMenuOpen(false);
 
@@ -199,7 +203,11 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('the-boys-website-theme', theme);
+    try {
+      window.localStorage.setItem('the-boys-website-theme', theme);
+    } catch {
+      /* theme preference simply will not persist */
+    }
   }, [theme]);
 
   return (

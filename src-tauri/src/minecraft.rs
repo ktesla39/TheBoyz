@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 use zip::ZipArchive;
 
 const VERSION_MANIFEST_URL: &str =
@@ -134,6 +135,20 @@ fn append_quick_play_args(args: &mut Vec<String>, server_address: &str) -> Resul
     Ok(())
 }
 
+fn quick_play_directory(game_dir: &Path) -> PathBuf {
+    let standard_path = game_dir.join("quickPlay");
+    if !standard_path.exists() || standard_path.is_dir() {
+        return standard_path;
+    }
+
+    let alternate_path = game_dir.join("quickPlayData");
+    if !alternate_path.exists() || alternate_path.is_dir() {
+        return alternate_path;
+    }
+
+    game_dir.join(format!("quickPlayData-{}", Uuid::new_v4().simple()))
+}
+
 fn os_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
@@ -207,6 +222,14 @@ async fn get_json(client: &reqwest::Client, url: &str) -> Result<Value, String> 
         .map_err(|error| format!("Invalid JSON response from {url}: {error}"))
 }
 
+fn is_retryable_download_error(error: &reqwest::Error) -> bool {
+    error.is_connect()
+        || error.is_timeout()
+        || error.is_request()
+        || error.is_body()
+        || error.is_decode()
+}
+
 async fn download_file(
     client: &reqwest::Client,
     url: &str,
@@ -246,18 +269,174 @@ async fn download_file(
             if actual.eq_ignore_ascii_case(expected) {
                 return Ok(());
             }
-        } else {
-            return Ok(());
         }
+        // When no hash is available, an existing file cannot be authenticated.
+        // Redownload it instead of silently executing or linking stale/corrupt bytes.
     }
 
-    let mut response = None;
     let mut last_error = String::new();
     for attempt in 0..4u32 {
         match client.get(url).send().await {
-            Ok(result) if result.status().is_success() => {
-                response = Some(result);
-                break;
+            Ok(response) if response.status().is_success() => {
+                let total_bytes = response.content_length();
+                let temporary = destination.with_extension(format!(
+                    "{}.{}.download",
+                    destination
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .unwrap_or("file"),
+                    uuid::Uuid::new_v4()
+                ));
+                let download_result = async {
+                    let mut file = tokio::fs::File::create(&temporary)
+                        .await
+                        .map_err(|error| {
+                            DownloadAttemptError::Fatal(format!(
+                                "Could not create {}: {error}",
+                                temporary.display()
+                            ))
+                        })?;
+                    let mut hasher = Sha1::new();
+                    let mut body = response.bytes_stream();
+                    let mut downloaded_bytes = 0u64;
+                    let mut last_progress = Instant::now() - Duration::from_secs(1);
+                    emit_launcher_progress(
+                        "downloading",
+                        &format!("Downloading {file_name}"),
+                        Some(file_name.clone()),
+                        0,
+                        total_bytes,
+                    );
+                    loop {
+                        let next = match body.try_next().await {
+                            Ok(Some(chunk)) => chunk,
+                            Ok(None) => break,
+                            Err(error) => {
+                                return Err(DownloadAttemptError::Retryable(error));
+                            }
+                        };
+                        hasher.update(&next);
+                        file.write_all(&next)
+                            .await
+                            .map_err(|error| {
+                                DownloadAttemptError::Fatal(format!(
+                                    "Could not write {}: {error}",
+                                    temporary.display()
+                                ))
+                            })?;
+                        downloaded_bytes = downloaded_bytes.saturating_add(next.len() as u64);
+                        if last_progress.elapsed() >= Duration::from_millis(120) {
+                            emit_launcher_progress(
+                                "downloading",
+                                &format!("Downloading {file_name}"),
+                                Some(file_name.clone()),
+                                downloaded_bytes,
+                                total_bytes,
+                            );
+                            last_progress = Instant::now();
+                        }
+                    }
+                    file.flush()
+                        .await
+                        .map_err(|error| {
+                            DownloadAttemptError::Fatal(format!(
+                                "Could not flush {}: {error}",
+                                temporary.display()
+                            ))
+                        })?;
+                    if let Some(total_bytes) = total_bytes {
+                        if downloaded_bytes != total_bytes {
+                            return Err(DownloadAttemptError::Fatal(format!(
+                                "Download for {url} was incomplete: expected {total_bytes} bytes, received {downloaded_bytes}."
+                            )));
+                        }
+                    }
+                    drop(file);
+                    emit_launcher_progress(
+                        "verifying",
+                        &format!("Verifying {file_name}"),
+                        Some(file_name.clone()),
+                        downloaded_bytes,
+                        total_bytes,
+                    );
+                    let actual_sha1 = hex::encode(hasher.finalize());
+                    if let Some(expected) = expected_sha1 {
+                        if !actual_sha1.eq_ignore_ascii_case(expected) {
+                            return Err(DownloadAttemptError::Fatal(format!(
+                                "SHA-1 verification failed for {url}: expected {expected}, got {actual_sha1}."
+                            )));
+                        }
+                    }
+                    if tokio::fs::try_exists(destination)
+                        .await
+                        .map_err(|error| {
+                            DownloadAttemptError::Fatal(format!(
+                                "Could not inspect {}: {error}",
+                                destination.display()
+                            ))
+                        })?
+                    {
+                        tokio::fs::remove_file(destination)
+                            .await
+                            .map_err(|error| {
+                                DownloadAttemptError::Fatal(format!(
+                                    "Could not replace {}: {error}",
+                                    destination.display()
+                                ))
+                            })?;
+                    }
+                    tokio::fs::rename(&temporary, destination)
+                        .await
+                        .map_err(|error| {
+                            DownloadAttemptError::Fatal(format!(
+                                "Could not finalize {}: {error}",
+                                destination.display()
+                            ))
+                        })?;
+                    emit_launcher_progress(
+                        "downloaded",
+                        &format!("Downloaded {file_name}"),
+                        Some(file_name.clone()),
+                        downloaded_bytes,
+                        total_bytes,
+                    );
+                    Ok::<_, DownloadAttemptError>(())
+                }
+                .await;
+
+                match download_result {
+                    Ok(()) => return Ok(()),
+                    Err(error) => {
+                        if let Err(cleanup_error) = tokio::fs::remove_file(&temporary).await {
+                            if cleanup_error.kind() != std::io::ErrorKind::NotFound {
+                                let error_message = match &error {
+                                    DownloadAttemptError::Retryable(error) => error.to_string(),
+                                    DownloadAttemptError::Fatal(error) => error.clone(),
+                                };
+                                return Err(format!(
+                                    "{error_message}; could not remove temporary download {}: {cleanup_error}",
+                                    temporary.display()
+                                ));
+                            }
+                        }
+                        match error {
+                            DownloadAttemptError::Retryable(error)
+                                if is_retryable_download_error(&error) && attempt < 3 =>
+                            {
+                                last_error = error.to_string();
+                                tokio::time::sleep(Duration::from_millis(500 * (1u64 << attempt)))
+                                    .await;
+                            }
+                            DownloadAttemptError::Retryable(error) => {
+                                return Err(format!(
+                                    "Download stream failed for {url}: {error}. Check your internet connection, firewall, or proxy settings."
+                                ));
+                            }
+                            DownloadAttemptError::Fatal(error) => return Err(error),
+                        }
+                    }
+                }
+                continue;
             }
             Ok(result) => {
                 let status = result.status();
@@ -267,6 +446,7 @@ async fn download_file(
                 {
                     return Err(format!("Download failed for {url}: {last_error}"));
                 }
+                tokio::time::sleep(Duration::from_millis(500 * (1u64 << attempt))).await;
             }
             Err(error) => {
                 last_error = error.to_string();
@@ -274,63 +454,19 @@ async fn download_file(
                 {
                     return Err(format!("Download request failed for {url}: {last_error}. Check your internet connection, firewall, or proxy settings."));
                 }
+                tokio::time::sleep(Duration::from_millis(500 * (1u64 << attempt))).await;
             }
         }
-        tokio::time::sleep(Duration::from_millis(500 * (1u64 << attempt))).await;
     }
-    let response = response.ok_or_else(|| {
-        format!("Could not download {file_name} after retries: {last_error}. Check your internet connection, firewall, or proxy settings.")
-    })?;
-    let total_bytes = response.content_length();
-    let temporary = destination.with_extension(format!(
-        "{}.{}.download",
-        destination
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("file"),
-        uuid::Uuid::new_v4()
-    ));
-    let download_result = async {
-        let mut file = tokio::fs::File::create(&temporary)
-            .await
-            .map_err(|error| format!("Could not create {}: {error}", temporary.display()))?;
-        let mut hasher = Sha1::new();
-        let mut body = response.bytes_stream();
-        let mut downloaded_bytes = 0u64;
-        let mut last_progress = Instant::now() - Duration::from_secs(1);
-        emit_launcher_progress("downloading", &format!("Downloading {file_name}"), Some(file_name.clone()), 0, total_bytes);
-        while let Some(chunk) = body.try_next().await.map_err(|error| {
-            format!("Download stream failed for {url}: {error}. Check your internet connection, firewall, or proxy settings.")
-        })? {
-            hasher.update(&chunk);
-            file.write_all(&chunk).await.map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
-            downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
-            if last_progress.elapsed() >= Duration::from_millis(120) {
-                emit_launcher_progress("downloading", &format!("Downloading {file_name}"), Some(file_name.clone()), downloaded_bytes, total_bytes);
-                last_progress = Instant::now();
-            }
-        }
-        file.flush().await.map_err(|error| format!("Could not flush {}: {error}", temporary.display()))?;
-        drop(file);
-        emit_launcher_progress("verifying", &format!("Verifying {file_name}"), Some(file_name.clone()), downloaded_bytes, total_bytes);
-        let actual_sha1 = hex::encode(hasher.finalize());
-        if let Some(expected) = expected_sha1 {
-            if !actual_sha1.eq_ignore_ascii_case(expected) {
-                return Err(format!("SHA-1 verification failed for {url}: expected {expected}, got {actual_sha1}."));
-            }
-        }
-        if tokio::fs::try_exists(destination).await.map_err(|error| format!("Could not inspect {}: {error}", destination.display()))? {
-            tokio::fs::remove_file(destination).await.map_err(|error| format!("Could not replace {}: {error}", destination.display()))?;
-        }
-        tokio::fs::rename(&temporary, destination).await.map_err(|error| format!("Could not finalize {}: {error}", destination.display()))?;
-        emit_launcher_progress("downloaded", &format!("Downloaded {file_name}"), Some(file_name.clone()), downloaded_bytes, total_bytes);
-        Ok::<_, String>(())
-    }.await;
-    if let Err(error) = download_result {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(error);
-    }
-    Ok(())
+    Err(format!(
+        "Could not download {file_name} after retries: {last_error}. Check your internet connection, firewall, or proxy settings."
+    ))
+}
+
+#[derive(Debug)]
+enum DownloadAttemptError {
+    Retryable(reqwest::Error),
+    Fatal(String),
 }
 
 fn rule_matches(rule: &Value, launch_features: Option<&HashMap<&str, bool>>) -> bool {
@@ -467,7 +603,13 @@ fn maven_artifact_info(library: &Value) -> Result<Option<(String, String)>, Stri
         .get("url")
         .and_then(Value::as_str)
         .unwrap_or("https://libraries.minecraft.net/");
-    let base_url = reqwest::Url::parse(repository)
+    // `Url::join` replaces the last path segment unless the base ends with a slash.
+    let repository = if repository.ends_with('/') {
+        repository.to_string()
+    } else {
+        format!("{repository}/")
+    };
+    let base_url = reqwest::Url::parse(&repository)
         .map_err(|error| format!("Invalid Maven repository URL: {error}"))?;
     if base_url.scheme() != "https" {
         return Err(format!("Refusing non-HTTPS Maven repository: {repository}"));
@@ -648,7 +790,7 @@ async fn install_vanilla(
         .map(|(url, path, sha1)| async move {
             download_file(client, &url, &path, Some(&sha1)).await
         })
-        .buffer_unordered(24)
+        .buffer_unordered(8)
         .try_collect::<Vec<_>>()
         .await?;
     if let Some(logging_file) = metadata
@@ -689,7 +831,8 @@ async fn install_vanilla(
             let hash = object
                 .get("hash")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Legacy asset has no content hash.".to_string())?;
+                .filter(|hash| valid_sha1(hash))
+                .ok_or_else(|| "Legacy asset has no valid content hash.".to_string())?;
             let relative = relative_library_path(name)?;
             let source = assets_root.join(&hash[..2]).join(hash);
             let destination = legacy_assets.join(relative);
@@ -836,14 +979,25 @@ async fn install_fabric_or_quilt(
         Some(version) => version.to_string(),
         None => {
             let versions = get_json(client, &format!("{versions_endpoint}/{game_version}")).await?;
-            versions
-                .as_array()
-                .and_then(|versions| versions.first())
-                .and_then(|entry| entry.get("loader"))
-                .and_then(|loader| loader.get("version"))
-                .and_then(Value::as_str)
+            let entries = versions.as_array().cloned().unwrap_or_default();
+            let loader_of = |entry: &Value| -> Option<(String, Option<bool>)> {
+                let loader = entry.get("loader")?;
+                Some((
+                    loader.get("version")?.as_str()?.to_string(),
+                    loader.get("stable").and_then(Value::as_bool),
+                ))
+            };
+            // Newest first; prefer a stable release over a beta/unstable build.
+            entries
+                .iter()
+                .filter_map(loader_of)
+                .find(|(version, stable)| match stable {
+                    Some(stable) => *stable,
+                    None => !version.contains('-'),
+                })
+                .or_else(|| entries.iter().filter_map(loader_of).next())
+                .map(|(version, _)| version)
                 .ok_or_else(|| format!("{loader} has no release for Minecraft {game_version}."))?
-                .to_string()
         }
     };
     let profile = get_json(
@@ -973,12 +1127,19 @@ async fn installer_version(
         .text()
         .await
         .map_err(|error| format!("Could not read NeoForge version metadata: {error}"))?;
-    text.split("<version>")
+    let matching = text
+        .split("<version>")
         .skip(1)
         .filter_map(|fragment| fragment.split("</version>").next())
         .filter(|version| version.starts_with(&version_prefix))
-        .last()
-        .map(str::to_string)
+        .collect::<Vec<_>>();
+    // Releases are listed oldest to newest; skip beta/alpha builds unless nothing else exists.
+    matching
+        .iter()
+        .rev()
+        .find(|version| !version.contains('-'))
+        .or_else(|| matching.last())
+        .map(|version| version.to_string())
         .ok_or_else(|| format!("NeoForge has no release matching Minecraft {game_version}."))
 }
 
@@ -1020,8 +1181,32 @@ async fn install_forge_family(
         "{}-{}-installer.jar",
         request.loader, loader_version
     ));
-    download_file(client, &installer_url, &installer, None).await?;
+    let sha1_url = format!("{installer_url}.sha1");
+    let sha1_response = client
+        .get(&sha1_url)
+        .send()
+        .await
+        .map_err(|error| format!("Could not request installer checksum {sha1_url}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Installer checksum {sha1_url} is unavailable: {error}"))?;
+    let sha1_text = sha1_response
+        .text()
+        .await
+        .map_err(|error| format!("Could not read installer checksum {sha1_url}: {error}"))?;
+    let installer_sha1 = sha1_text
+        .split_whitespace()
+        .next()
+        .filter(|value| valid_sha1(value))
+        .ok_or_else(|| format!("Invalid installer checksum returned by {sha1_url}."))?;
+    download_file(client, &installer_url, &installer, Some(installer_sha1)).await?;
     let game_dir = root.join("minecraft");
+    // The Forge/NeoForge installers refuse to run unless a launcher profile file exists.
+    let launcher_profiles = game_dir.join("launcher_profiles.json");
+    if !launcher_profiles.is_file() {
+        tokio::fs::write(&launcher_profiles, br#"{"profiles":{},"version":3}"#)
+            .await
+            .map_err(|error| format!("Could not prepare the loader installer: {error}"))?;
+    }
     let mut installer_command = tokio::process::Command::new(java);
     suppress_tokio_console_window(&mut installer_command);
     let output = installer_command
@@ -1532,7 +1717,7 @@ pub fn prepare_launch(
         &request.instance_name,
         request.custom_game_dir.as_deref(),
     )?;
-    let quick_play_path = game_dir.join("quickPlay");
+    let quick_play_path = quick_play_directory(&game_dir);
     if supports_quick_play(&request.game_version) {
         fs::create_dir_all(&quick_play_path).map_err(|error| {
             format!(
@@ -1864,6 +2049,23 @@ mod tests {
         append_quick_play_args(&mut args, "play.example.net:25565").unwrap();
         assert_eq!(args, ["--quickPlayMultiplayer", "play.example.net:25565"]);
         assert!(append_quick_play_args(&mut Vec::new(), "play.example.net:25565 extra").is_err());
+    }
+
+    #[test]
+    fn quick_play_uses_a_directory_when_the_default_path_is_a_file() {
+        let game_dir =
+            std::env::temp_dir().join(format!("the-boys-quick-play-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(&game_dir).unwrap();
+        let conflicting_file = game_dir.join("quickPlay");
+        fs::write(&conflicting_file, b"preserve existing data").unwrap();
+
+        let selected = quick_play_directory(&game_dir);
+        assert_eq!(selected, game_dir.join("quickPlayData"));
+        fs::create_dir_all(&selected).unwrap();
+        assert!(conflicting_file.is_file());
+        assert!(selected.is_dir());
+
+        fs::remove_dir_all(game_dir).unwrap();
     }
 
     #[test]

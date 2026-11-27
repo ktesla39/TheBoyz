@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   ArrowLeft,
@@ -49,9 +49,14 @@ import {
   NetheriteIngotIcon,
 } from '../icons/MinecraftIcons';
 import { InstanceCircleLogo } from './InstanceCircleLogo';
+import { fetchLatestProjectVersion } from '../../services/modrinthApi';
+import { createStoredZip } from '../../services/zipService';
 import {
   invokeDeleteModFile,
+  invokeDeleteInstanceWorld,
   invokeImportLocalAddonFiles,
+  invokeListInstanceAddons,
+  invokeListInstanceWorlds,
   invokeToggleInstanceAddon,
   invokeToggleModFile,
   invokeOpenInstanceFolder,
@@ -94,10 +99,103 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isShortcutModalOpen, setIsShortcutModalOpen] = useState(false);
   const [customJvmArgs, setCustomJvmArgs] = useState((instance.javaConfig.jvmArguments || []).join(' '));
+  const [customDirDraft, setCustomDirDraft] = useState(instance.customGameDir ?? '');
 
+  useEffect(() => {
+    setCustomDirDraft(instance.customGameDir ?? '');
+  }, [instance.customGameDir]);
+
+  useEffect(() => {
+    setCustomJvmArgs((instance.javaConfig.jvmArguments || []).join(' '));
+  }, [instance.id]);
+
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    let active = true;
+    void Promise.allSettled([
+      invokeListInstanceAddons(instance.id, instance.customGameDir),
+      invokeListInstanceWorlds(instance.id, instance.customGameDir),
+    ]).then(([addonsResult, worldsResult]) => {
+      if (!active) return;
+
+      const updates: Partial<MinecraftInstance> = {};
+      const errors: string[] = [];
+      if (addonsResult.status === 'fulfilled') {
+        const addons = addonsResult.value;
+        const existingMods = instance.mods ?? [];
+        const existingPacks = instance.packs ?? [];
+        updates.mods = addons
+          .filter((addon) => addon.addon_type === 'mod')
+          .map((addon) => {
+            const existing = existingMods.find((mod) => mod.filename === addon.file_name);
+            return {
+              ...existing,
+              id: existing?.id ?? addon.id,
+              name: existing?.name ?? addon.name,
+              filename: addon.file_name,
+              version: existing?.version ?? 'Installed',
+              enabled: addon.enabled,
+              sizeBytes: addon.size_bytes,
+              source: existing?.source ?? 'local',
+            };
+          });
+        updates.packs = addons
+          .filter((addon) => addon.addon_type !== 'mod')
+          .map((addon, index) => {
+            const existing = existingPacks.find((pack) =>
+              pack.filename === addon.file_name && pack.type === addon.addon_type
+            );
+            return {
+              id: existing?.id ?? addon.id,
+              name: existing?.name ?? addon.name,
+              filename: addon.file_name,
+              type: addon.addon_type as InstalledPack['type'],
+              enabled: addon.enabled,
+              order: existing?.order ?? index + 1,
+              description: existing?.description,
+              iconUrl: existing?.iconUrl,
+              source: existing?.source ?? 'local',
+            };
+          });
+      } else {
+        errors.push(`Could not load installed addons: ${String(addonsResult.reason)}`);
+      }
+
+      if (worldsResult.status === 'fulfilled') {
+        const existingWorlds = instance.worlds ?? [];
+        updates.worlds = worldsResult.value.map((world) => ({
+          ...world,
+          difficulty: existingWorlds.find((existing) => existing.id === world.id)?.difficulty,
+          seed: existingWorlds.find((existing) => existing.id === world.id)?.seed,
+          cheatsEnabled: existingWorlds.find((existing) => existing.id === world.id)?.cheatsEnabled,
+        }));
+      } else {
+        errors.push(`Could not load world saves: ${String(worldsResult.reason)}`);
+      }
+
+      if (Object.keys(updates).length > 0) {
+        onUpdateInstance({ ...instance, ...updates });
+      }
+      if (errors.length > 0) {
+        setToastMessage(errors.join(' '));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [instance.id, instance.customGameDir]);
+
+  const toastTimerRef = React.useRef<number | null>(null);
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+  }, []);
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3200);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToastMessage(null);
+    }, 3200);
   };
 
   // Mod management handlers
@@ -164,14 +262,71 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
     }
   };
 
-  const handleCheckModUpdates = () => {
+  const handleCheckModUpdates = async () => {
     setCheckingUpdates(true);
     setUpdateStatus(null);
-    setTimeout(() => {
+    try {
+      const checkableMods = instance.mods.filter(
+        (mod): mod is InstalledMod & { modrinthId: string } =>
+          typeof mod.modrinthId === 'string' && mod.modrinthId.length > 0,
+      );
+      if (checkableMods.length === 0) {
+        setUpdateStatus('No installed mods have Modrinth project IDs, so their versions cannot be checked.');
+        return;
+      }
+
+      const results = await Promise.allSettled(checkableMods.map((mod) =>
+        fetchLatestProjectVersion(mod.modrinthId!, instance.gameVersion, instance.loader)
+      ));
+      const updatesByModId = new Map<string, { latestVersion: string | null; error?: string }>();
+      results.forEach((result, index) => {
+        const mod = checkableMods[index];
+        if (result.status === 'rejected') {
+          updatesByModId.set(mod.id, {
+            latestVersion: null,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
+        } else {
+          updatesByModId.set(mod.id, { latestVersion: result.value?.version_number ?? null });
+        }
+      });
+
+      const updatedMods = instance.mods.map((mod) => {
+        const result = updatesByModId.get(mod.id);
+        if (!result || result.error) return mod;
+        if (!result.latestVersion) {
+          return { ...mod, latestVersion: undefined, hasUpdate: undefined };
+        }
+        const hasComparableVersion = !['installed', 'imported', 'local file', 'latest', 'modpack'].includes(
+          mod.version.trim().toLowerCase(),
+        );
+        return {
+          ...mod,
+          latestVersion: result.latestVersion,
+          hasUpdate: hasComparableVersion ? mod.version !== result.latestVersion : undefined,
+        };
+      });
+      onUpdateInstance({ ...instance, mods: updatedMods });
+
+      const updateCount = updatedMods.filter((mod) => mod.hasUpdate).length;
+      const failures = [...updatesByModId.values()].filter((result) => result.error);
+      const failureDetails = [...new Set(
+        failures.map((result) => result.error).filter((error): error is string => Boolean(error)),
+      )].join('; ');
+      const unknownVersions = checkableMods.filter((mod) =>
+        ['installed', 'imported', 'local file', 'latest', 'modpack'].includes(mod.version.trim().toLowerCase())
+      ).length;
+      const summary = `${updateCount} update${updateCount === 1 ? '' : 's'} available.`;
+      setUpdateStatus([
+        summary,
+        unknownVersions ? `${unknownVersions} installed version${unknownVersions === 1 ? '' : 's'} could not be compared.` : '',
+        failures.length ? `${failures.length} project${failures.length === 1 ? '' : 's'} failed to check: ${failureDetails}` : '',
+      ].filter(Boolean).join(' '));
+    } catch (reason) {
+      setUpdateStatus(`Could not check mod updates: ${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally {
       setCheckingUpdates(false);
-      // Simulate verifying hashes against Modrinth API
-      setUpdateStatus('All 5 installed mods are up to date with official repositories.');
-    }, 1200);
+    }
   };
 
   // Pack management handlers
@@ -215,9 +370,20 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
   };
 
   // World Saves handlers
-  const handleDeleteWorld = (worldId: string) => {
-    const updatedWorlds = instance.worlds.filter((w) => w.id !== worldId);
-    onUpdateInstance({ ...instance, worlds: updatedWorlds });
+  const handleDeleteWorld = async (worldId: string) => {
+    const world = instance.worlds.find((item) => item.id === worldId);
+    if (!window.confirm(`Permanently delete the world "${world?.name ?? worldId}"? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteInstanceWorld(instance.id, worldId, instance.customGameDir);
+      }
+      const updatedWorlds = instance.worlds.filter((world) => world.id !== worldId);
+      onUpdateInstance({ ...instance, worlds: updatedWorlds });
+    } catch (reason) {
+      showToast(`Could not delete world: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Backup Snapshot handlers
@@ -245,7 +411,7 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
     onUpdateInstance({ ...instance, backups: updated });
   };
 
-  // Export as .mrpack / ZIP
+  // Export as .mrpack (a ZIP archive containing modrinth.index.json)
   const handleExportModpack = () => {
     const files = [];
     for (const mod of instance.mods) {
@@ -254,34 +420,44 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
         return;
       }
       files.push({
-        path: `mods/${mod.filename}`,
+        path: `mods/${mod.filename.replace(/\.disabled$/i, '')}`,
         hashes: { sha1: mod.sha1 },
         downloads: [mod.downloadUrl],
         fileSize: mod.sizeBytes,
       });
     }
 
+    const loaderDependencyKeys: Record<string, string> = {
+      fabric: 'fabric-loader',
+      quilt: 'quilt-loader',
+      forge: 'forge',
+      neoforge: 'neoforge',
+    };
+    const loaderKey = loaderDependencyKeys[instance.loader];
     const metadata = {
       formatVersion: 1,
       game: 'minecraft',
-      versionId: instance.gameVersion,
+      versionId: '1.0.0',
       name: instance.name,
       summary: 'Exported Modpack from The Boys Launcher',
       files,
       dependencies: {
         minecraft: instance.gameVersion,
-        ...(instance.loaderVersion ? { [instance.loader]: instance.loaderVersion } : {}),
+        ...(loaderKey && instance.loaderVersion ? { [loaderKey]: instance.loaderVersion } : {}),
       },
     };
-    const blob = new Blob([JSON.stringify(metadata, null, 2)], {
-      type: 'application/json',
-    });
+    const archive = createStoredZip([
+      { name: 'modrinth.index.json', data: new TextEncoder().encode(JSON.stringify(metadata, null, 2)) },
+    ]);
+    const blob = new Blob([archive], { type: 'application/x-modrinth-modpack+zip' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${instance.name.replace(/\s+/g, '_')}.mrpack`;
+    a.download = `${instance.name.replace(/[^\w.-]+/g, '_')}.mrpack`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   return (
@@ -551,8 +727,12 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
           </div>
 
           {updateStatus && (
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2 font-mono">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 font-mono ${
+              /failed|could not/i.test(updateStatus)
+                ? 'bg-red-500/10 border-red-500/20 text-red-200'
+                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+            }`}>
+              <Check className="w-4 h-4 shrink-0" />
               <span>{updateStatus}</span>
             </div>
           )}
@@ -605,7 +785,11 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
                         {mod.filename}
                       </td>
                       <td className="py-3 px-4 font-mono text-emerald-400 font-semibold">
-                        {mod.version}
+                        {mod.hasUpdate
+                          ? `${mod.version} → ${mod.latestVersion}`
+                          : mod.latestVersion && !mod.hasUpdate
+                            ? `${mod.version} (latest ${mod.latestVersion})`
+                            : mod.version}
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-500">
                         {mod.sizeBytes ? `${(mod.sizeBytes / 1024).toFixed(0)} KB` : 'N/A'}
@@ -712,7 +896,7 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
                       {world.name}
                     </h4>
                     <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                      {world.gameMode}
+                      {world.gameMode === 'unknown' ? 'WORLD' : world.gameMode}
                     </span>
                   </div>
                   <div className="text-xs text-slate-400 font-mono mt-1">
@@ -950,7 +1134,11 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
                     const val = Number(e.target.value);
                     onUpdateInstance({
                       ...instance,
-                      javaConfig: { ...instance.javaConfig, minMemoryMb: val },
+                      javaConfig: {
+                        ...instance.javaConfig,
+                        minMemoryMb: val,
+                        maxMemoryMb: Math.max(instance.javaConfig.maxMemoryMb, val),
+                      },
                     });
                   }}
                   className="w-full accent-emerald-500 cursor-pointer"
@@ -972,7 +1160,11 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
                     const val = Number(e.target.value);
                     onUpdateInstance({
                       ...instance,
-                      javaConfig: { ...instance.javaConfig, maxMemoryMb: val },
+                      javaConfig: {
+                        ...instance.javaConfig,
+                        maxMemoryMb: val,
+                        minMemoryMb: Math.min(instance.javaConfig.minMemoryMb || 1024, val),
+                      },
                     });
                   }}
                   className="w-full accent-emerald-500 cursor-pointer"
@@ -1084,13 +1276,17 @@ export const InstanceDetailView: React.FC<InstanceDetailViewProps> = ({
               </div>
               <input
                 type="text"
-                value={instance.customGameDir || ''}
-                onChange={(e) =>
-                  onUpdateInstance({
-                    ...instance,
-                    customGameDir: e.target.value.trim() ? e.target.value : undefined,
-                  })
-                }
+                value={customDirDraft}
+                onChange={(e) => setCustomDirDraft(e.target.value)}
+                onBlur={() => {
+                  const next = customDirDraft.trim() ? customDirDraft.trim() : undefined;
+                  if (next !== instance.customGameDir) {
+                    onUpdateInstance({ ...instance, customGameDir: next });
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
                 placeholder="Default: .minecraft/instances/[instance_name]"
                 className="w-full px-3 py-2 bg-black/50 border border-white/10 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
               />

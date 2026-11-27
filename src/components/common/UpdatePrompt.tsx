@@ -29,10 +29,12 @@ type UpdateNotice =
   | { kind: 'installing'; update?: Update; progress: number | null; downloadedBytes: number; totalBytes: number | null }
   | { kind: 'error'; message: string; update?: Update };
 
-export function UpdatePrompt() {
+export function UpdatePrompt({ autoCheck = true }: { autoCheck?: boolean }) {
   const [notice, setNotice] = useState<UpdateNotice | null>(null);
 
-  const checkForUpdates = useCallback(async () => {
+  // `silent` is used for the automatic startup check: being offline must not greet the user
+  // with an error popup. Only a manual retry reports failures.
+  const checkForUpdates = useCallback(async (silent = false) => {
     setNotice(null);
     let foundUpdate = false;
     let signedUpdaterError: unknown;
@@ -57,6 +59,7 @@ export function UpdatePrompt() {
         }
       } catch (reason) {
         console.warn('Update check status:', reason);
+        if (silent) return;
         const signedError = signedUpdaterError instanceof Error
           ? signedUpdaterError.message
           : signedUpdaterError === undefined
@@ -74,13 +77,14 @@ export function UpdatePrompt() {
   }, []);
 
   useEffect(() => {
-    if (!isTauri()) {
+    // Honour the "automatic update checks" setting.
+    if (!isTauri() || !autoCheck) {
       return;
     }
 
-    const timer = window.setTimeout(() => void checkForUpdates(), 2000);
+    const timer = window.setTimeout(() => void checkForUpdates(true), 2000);
     return () => window.clearTimeout(timer);
-  }, [checkForUpdates]);
+  }, [checkForUpdates, autoCheck]);
 
   const closeNotice = async () => {
     playMinecraftClickSound();
@@ -101,7 +105,7 @@ export function UpdatePrompt() {
   const retryCheck = async () => {
     playMinecraftClickSound();
     await closeNotice();
-    await checkForUpdates();
+    await checkForUpdates(false);
   };
 
   const installUpdate = async (update: Update) => {
@@ -147,7 +151,41 @@ export function UpdatePrompt() {
           });
         }
       });
-      playMinecraftLevelUpSound();
+    } catch (reason) {
+      const signedDownloadError = reason instanceof Error ? reason.message : String(reason);
+      let githubFallbackError: unknown;
+      try {
+        const githubUpdate = await invokeCheckGithubLauncherUpdate();
+        if (githubUpdate.has_update && githubUpdate.download_url && githubUpdate.sha256) {
+          setNotice({
+            kind: 'installing',
+            progress: null,
+            downloadedBytes: 0,
+            totalBytes: null,
+          });
+          await invokeApplyGithubLauncherUpdate(githubUpdate.download_url, githubUpdate.sha256);
+          playMinecraftLevelUpSound();
+          await update.close();
+          return;
+        }
+      } catch (fallbackReason) {
+        githubFallbackError = fallbackReason;
+      }
+
+      setNotice({
+        kind: 'error',
+        update,
+        message: githubFallbackError
+          ? `Signed update download failed: ${signedDownloadError}. Verified GitHub installer fallback failed: ${
+            githubFallbackError instanceof Error ? githubFallbackError.message : String(githubFallbackError)
+          }`
+          : `Signed update download failed: ${signedDownloadError}`,
+      });
+      return;
+    }
+
+    playMinecraftLevelUpSound();
+    try {
       await update.close();
       await relaunch();
     } catch (reason) {

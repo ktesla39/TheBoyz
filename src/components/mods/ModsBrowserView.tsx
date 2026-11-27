@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
   Search,
@@ -43,7 +43,10 @@ export const ModsBrowserView: React.FC<ModsBrowserViewProps> = ({
   const [targetItem, setTargetItem] = useState<InstallableItem | null>(null);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
+  const searchRequestIdRef = useRef(0);
   const performSearch = async () => {
+    const requestId = ++searchRequestIdRef.current;
+    const isStale = () => requestId !== searchRequestIdRef.current;
     setLoading(true);
     setSearchError(null);
     try {
@@ -55,11 +58,13 @@ export const ModsBrowserView: React.FC<ModsBrowserViewProps> = ({
         limit: 24,
       };
       const res = await searchModrinth(opts);
+      if (isStale()) return;
       setModrinthResults(res.hits);
     } catch (reason) {
+      if (isStale()) return;
       setSearchError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   };
 

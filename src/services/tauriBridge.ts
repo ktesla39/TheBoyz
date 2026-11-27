@@ -92,6 +92,20 @@ export async function invokeCreateInstance(
   });
 }
 
+export async function invokeCloneInstance(
+  sourceId: string,
+  targetId: string,
+  targetName: string,
+  sourceCustomGameDir?: string,
+): Promise<boolean> {
+  return invokeTauri<boolean>('clone_instance', {
+    sourceId,
+    targetId,
+    targetName,
+    sourceCustomGameDir,
+  });
+}
+
 export async function invokeDeleteInstance(id: string): Promise<boolean> {
   return invokeTauri<boolean>('delete_instance', { id });
 }
@@ -114,11 +128,33 @@ export async function invokeImportMinecraftInstance(sourcePath: string): Promise
   });
 }
 
+/**
+ * The instance's "garbage collector" choice was stored but never reached the JVM. Translate it
+ * into a flag unless the user's own arguments already select a collector (two collector flags
+ * make the JVM abort with "Conflicting collector combinations").
+ */
+export function withGarbageCollectorFlag(instance: MinecraftInstance): string[] {
+  const args = instance.javaConfig.jvmArguments ?? [];
+  if (args.some((argument) => /^-XX:\+Use\w*GC$/.test(argument))) return args;
+  const java = instance.javaConfig.version || 0;
+  const flag: string | null = (() => {
+    switch (instance.javaConfig.garbageCollector) {
+      case 'G1GC': return '-XX:+UseG1GC';
+      case 'ParallelGC': return '-XX:+UseParallelGC';
+      case 'ZGC': return java >= 15 ? '-XX:+UseZGC' : null;
+      case 'Shenandoah': return java >= 17 ? '-XX:+UseShenandoahGC' : null;
+      default: return null;
+    }
+  })();
+  return flag ? [flag, ...args] : args;
+}
+
 export async function invokeLaunchGame(
   instance: MinecraftInstance,
   account: LauncherAccount,
   serverAddress?: string,
-  lowSpecMode = false
+  lowSpecMode = false,
+  dedicatedGpu = true
 ): Promise<TauriLaunchResult> {
   return invokeTauri<TauriLaunchResult>('launch_game', {
     payload: {
@@ -134,10 +170,10 @@ export async function invokeLaunchGame(
       username: account.username,
       uuid: account.uuid,
       access_token: account.type === 'microsoft' ? account.accessToken : 'offline',
-      jvm_args: instance.javaConfig.jvmArguments,
+      jvm_args: withGarbageCollectorFlag(instance),
       graphics_api: instance.graphicsApi,
       low_spec_mode: lowSpecMode,
-      dedicated_gpu: true,
+      dedicated_gpu: dedicatedGpu,
       server_address: serverAddress,
       resolution_width: instance.resolution.width,
       resolution_height: instance.resolution.height,
@@ -332,6 +368,15 @@ export interface TauriInstanceAddonItem {
   path: string;
 }
 
+export interface TauriInstanceWorldItem {
+  id: string;
+  name: string;
+  folderName: string;
+  gameMode: MinecraftInstance['worlds'][number]['gameMode'];
+  lastPlayed: number;
+  sizeMb: number;
+}
+
 export interface TauriImportedAddonFile {
   file_name: string;
   name: string;
@@ -368,6 +413,28 @@ export async function invokeListInstanceAddons(
 ): Promise<TauriInstanceAddonItem[]> {
   return invokeTauri<TauriInstanceAddonItem[]>('list_instance_addons', {
     instanceId,
+    customGameDir,
+  });
+}
+
+export async function invokeListInstanceWorlds(
+  instanceId: string,
+  customGameDir?: string,
+): Promise<TauriInstanceWorldItem[]> {
+  return invokeTauri<TauriInstanceWorldItem[]>('list_instance_worlds', {
+    instanceId,
+    customGameDir,
+  });
+}
+
+export async function invokeDeleteInstanceWorld(
+  instanceId: string,
+  folderName: string,
+  customGameDir?: string,
+): Promise<boolean> {
+  return invokeTauri<boolean>('delete_instance_world', {
+    instanceId,
+    folderName,
     customGameDir,
   });
 }

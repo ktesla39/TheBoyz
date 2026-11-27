@@ -62,13 +62,44 @@ function renderMinecraftMotd(motd: string) {
     '§f': '#ffffff',
   };
 
+  let bold = false;
+  let italic = false;
+  let underline = false;
+  let strike = false;
+
   return parts.map((part, index) => {
     if (colorMap[part]) {
+      // A colour code also resets every formatting code that preceded it.
       currentColor = colorMap[part];
+      bold = italic = underline = strike = false;
       return null;
     }
+    if (/^§[k-or]$/.test(part)) {
+      switch (part) {
+        case '§l': bold = true; break;
+        case '§m': strike = true; break;
+        case '§n': underline = true; break;
+        case '§o': italic = true; break;
+        case '§r':
+          currentColor = '#cbd5e1';
+          bold = italic = underline = strike = false;
+          break;
+        default: break; // §k (obfuscated) has no static rendering
+      }
+      return null;
+    }
+    if (part === '') return null;
+    const decorations = [underline ? 'underline' : '', strike ? 'line-through' : ''].filter(Boolean).join(' ');
     return (
-      <span key={index} style={{ color: currentColor }}>
+      <span
+        key={index}
+        style={{
+          color: currentColor,
+          fontWeight: bold ? 700 : undefined,
+          fontStyle: italic ? 'italic' : undefined,
+          textDecoration: decorations || undefined,
+        }}
+      >
         {part}
       </span>
     );

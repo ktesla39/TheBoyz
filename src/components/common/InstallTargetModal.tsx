@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Check, Plus, Download, Sparkles, FolderDown, ShieldCheck, AlertCircle } from 'lucide-react';
 import { MinecraftInstance } from '../../types/instance';
-import { playMinecraftClickSound, playMinecraftLevelUpSound } from '../../services/soundService';
+import { playMinecraftClickSound } from '../../services/soundService';
 import {
   DiamondSwordIcon,
   CraftingTableIcon,
@@ -32,7 +32,7 @@ interface InstallTargetModalProps {
   instances: MinecraftInstance[];
   activeInstanceId?: string;
   item: InstallableItem | null;
-  onConfirmInstall: (targetInstanceId: string, item: InstallableItem) => void;
+  onConfirmInstall: (targetInstanceId: string, item: InstallableItem) => Promise<void>;
   onCreateInstanceWithItem?: (item: InstallableItem) => void;
 }
 
@@ -60,18 +60,36 @@ export const InstallTargetModal: React.FC<InstallTargetModalProps> = ({
     return activeInstanceId ?? '';
   });
   const [isInstalling, setIsInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const itemKey = item ? `${item.source}:${item.id}` : null;
+
+  // The modal stays mounted while closed, so re-seed the selection every time it opens;
+  // otherwise it keeps a stale (possibly deleted) instance from an earlier session.
+  useEffect(() => {
+    if (!isOpen) return;
+    setInstallError(null);
+    setSelectedInstanceId((current) => {
+      if (instances.some((instance) => instance.id === activeInstanceId)) return activeInstanceId ?? '';
+      if (instances.some((instance) => instance.id === current)) return current;
+      return instances[0]?.id ?? '';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, itemKey]);
 
   if (!isOpen || !item) return null;
 
   const currentSelected = instances.find((i) => i.id === selectedInstanceId) ?? null;
 
-  const handleInstall = () => {
+  const handleInstall = async () => {
     if (!currentSelected) return;
     setIsInstalling(true);
-    playMinecraftLevelUpSound();
     try {
-      onConfirmInstall(currentSelected.id, item);
+      setInstallError(null);
+      playMinecraftClickSound();
+      await onConfirmInstall(currentSelected.id, item);
       onClose();
+    } catch (reason) {
+      setInstallError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setIsInstalling(false);
     }
@@ -111,11 +129,12 @@ export const InstallTargetModal: React.FC<InstallTargetModalProps> = ({
             </div>
           </div>
           <button
+            disabled={isInstalling}
             onClick={() => {
               playMinecraftClickSound();
               onClose();
             }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
           >
             <X className="w-5 h-5" />
           </button>
@@ -123,6 +142,11 @@ export const InstallTargetModal: React.FC<InstallTargetModalProps> = ({
 
         {/* Content Body */}
         <div className="p-5 overflow-y-auto space-y-5 flex-1">
+          {installError && (
+            <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+              {installError}
+            </p>
+          )}
           {/* Target Item Preview Card */}
           <div className="p-3.5 rounded-lg bg-[#0c0f16] border border-white/10 flex items-center gap-3.5">
             {item.iconUrl ? (
@@ -190,6 +214,7 @@ export const InstallTargetModal: React.FC<InstallTargetModalProps> = ({
                     onClick={() => {
                       playMinecraftClickSound();
                       setSelectedInstanceId(inst.id);
+                      setInstallError(null);
                     }}
                     className={`w-full p-3 rounded-lg border text-left transition-all flex items-center justify-between cursor-pointer ${
                       isSelected
@@ -247,11 +272,12 @@ export const InstallTargetModal: React.FC<InstallTargetModalProps> = ({
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3.5 border-t border-white/10 bg-[#0f131c]">
           <button
+            disabled={isInstalling}
             onClick={() => {
               playMinecraftClickSound();
               onClose();
             }}
-            className="btn-mc px-4 py-2 text-xs font-semibold text-slate-300 rounded"
+            className="btn-mc px-4 py-2 text-xs font-semibold text-slate-300 rounded disabled:opacity-50"
           >
             Cancel
           </button>

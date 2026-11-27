@@ -36,7 +36,7 @@ interface AddonInstallModalProps {
     targetInstanceId: string,
     addon: UnifiedAddonItem,
     withDependencies: boolean
-  ) => void;
+  ) => Promise<void>;
   onCreateNewInstanceAndInstall: (
     newInstanceData: {
       name: string;
@@ -117,17 +117,17 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
 
   // Calculate compatibility for an arbitrary instance
   const getInstanceCompatibility = (inst: MinecraftInstance) => {
-    const hasLoader = addon.loaders && addon.loaders.length > 0;
+    // Only mods and modpacks depend on a loader; a vanilla instance cannot run loader mods.
+    const hasLoader = usesAddonLoaders && addon.loaders && addon.loaders.length > 0;
     const loaderMatches =
       !hasLoader ||
-      addon.loaders?.some((l) => l.toLowerCase() === inst.loader.toLowerCase()) ||
-      inst.loader === 'vanilla';
+      addon.loaders?.some((l) => l.toLowerCase() === inst.loader.toLowerCase());
 
     const versionMatches = addon.gameVersions.some((v) => {
       if (v === inst.gameVersion) return true;
       const partsA = v.split('.');
       const partsB = inst.gameVersion.split('.');
-      return partsA[0] === partsB[0] && partsA[1] === partsB[1];
+      return partsA[1] !== undefined && partsA[0] === partsB[0] && partsA[1] === partsB[1];
     });
 
     if (loaderMatches && versionMatches) {
@@ -152,13 +152,15 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
 
   const dependenciesList = addon.dependencies ?? [];
 
-  const handleInstallToExisting = () => {
+  const handleInstallToExisting = async () => {
     if (!currentSelected) return;
     setIsInstalling(true);
-    playMinecraftLevelUpSound();
     try {
-      onConfirmInstall(currentSelected.id, addon, installDependencies);
+      playMinecraftClickSound();
+      await onConfirmInstall(currentSelected.id, addon, installDependencies);
       onClose();
+    } catch (reason) {
+      setCreateError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setIsInstalling(false);
     }
@@ -167,8 +169,8 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
   const handleCreateAndInstall = async () => {
     if (!newInstanceName.trim() || !newInstanceVersion || !newInstanceLoader) return;
     setIsInstalling(true);
-    playMinecraftLevelUpSound();
     try {
+      playMinecraftClickSound();
       await onCreateNewInstanceAndInstall(
         {
           name: newInstanceName.trim(),
@@ -177,6 +179,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
         },
         addon
       );
+      playMinecraftLevelUpSound();
       onClose();
     } catch (reason) {
       setCreateError(reason instanceof Error ? reason.message : String(reason));
@@ -202,11 +205,12 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
             </div>
           </div>
           <button
+            disabled={isInstalling}
             onClick={() => {
               playMinecraftClickSound();
               onClose();
             }}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-40"
           >
             <X className="w-5 h-5" />
           </button>
@@ -214,6 +218,11 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-5 flex-1">
+          {createError && !isCreatingInline && (
+            <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+              {createError}
+            </p>
+          )}
           {/* Target Addon Badge Strip */}
           <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 flex items-center gap-3.5">
             {addon.iconUrl ? (
@@ -292,6 +301,7 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
                       onClick={() => {
                         playMinecraftClickSound();
                         setSelectedInstanceId(inst.id);
+                        setCreateError(null);
                       }}
                       className={`w-full p-3 rounded-xl border text-left transition-all flex items-center justify-between cursor-pointer ${
                         isSelected
@@ -461,11 +471,12 @@ export const AddonInstallModal: React.FC<AddonInstallModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 bg-[#0a0d14]">
           <button
             type="button"
+            disabled={isInstalling}
             onClick={() => {
               playMinecraftClickSound();
               onClose();
             }}
-            className="btn-mc px-4 py-2 text-xs font-semibold text-slate-300 rounded font-display"
+            className="btn-mc px-4 py-2 text-xs font-semibold text-slate-300 rounded font-display disabled:opacity-40"
           >
             Cancel
           </button>

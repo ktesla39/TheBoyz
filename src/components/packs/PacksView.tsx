@@ -24,6 +24,8 @@ import { InstallTargetModal, InstallableItem } from '../common/InstallTargetModa
 import {
   invokeImportLocalAddonFiles,
   invokeInstallInstanceAddon,
+  invokeToggleInstanceAddon,
+  invokeDeleteInstanceAddon,
   isTauriEnvironment,
 } from '../../services/tauriBridge';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -149,7 +151,12 @@ export const PacksView: React.FC<PacksViewProps> = ({
         };
         onUpdateInstance({
           ...targetInst,
-          packs: [...(targetInst.packs || []), newPack],
+          packs: [
+            ...(targetInst.packs || []).filter(
+              (pack) => pack.id !== newPack.id && !(pack.filename === newPack.filename && pack.type === newPack.type)
+            ),
+            newPack,
+          ],
         });
       }
       playMinecraftLevelUpSound();
@@ -161,6 +168,10 @@ export const PacksView: React.FC<PacksViewProps> = ({
   const handleImportZip = async () => {
     if (!activeInstance || !onUpdateInstance) {
       setSearchError('Select an instance before importing a resource pack.');
+      return;
+    }
+    if (!isTauriEnvironment()) {
+      setSearchError('Importing local files is available in the desktop launcher.');
       return;
     }
     setSearchError(null);
@@ -199,13 +210,24 @@ export const PacksView: React.FC<PacksViewProps> = ({
   };
 
   // Toggle pack enabled/disabled in active instance
-  const handleTogglePack = (packId: string) => {
+  const handleTogglePack = async (packId: string) => {
     if (!activeInstance || !onUpdateInstance) return;
+    const pack = (activeInstance.packs || []).find((p) => p.id === packId);
+    if (!pack) return;
     playMinecraftClickSound();
-    const updatedPacks = (activeInstance.packs || []).map((p) =>
-      p.id === packId ? { ...p, enabled: !p.enabled } : p
-    );
-    onUpdateInstance({ ...activeInstance, packs: updatedPacks });
+    const enabled = !pack.enabled;
+    try {
+      const onDiskEnabled = !pack.filename.toLowerCase().endsWith('.disabled');
+      const filename = isTauriEnvironment() && onDiskEnabled !== enabled
+        ? await invokeToggleInstanceAddon(activeInstance.id, pack.type, pack.filename, enabled, activeInstance.customGameDir)
+        : pack.filename;
+      onUpdateInstance({
+        ...activeInstance,
+        packs: (activeInstance.packs || []).map((p) => (p.id === packId ? { ...p, enabled, filename } : p)),
+      });
+    } catch (reason) {
+      setSearchError(`Could not toggle ${pack.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   // Move pack priority up / down
@@ -225,11 +247,22 @@ export const PacksView: React.FC<PacksViewProps> = ({
   };
 
   // Delete pack from active instance
-  const handleDeletePack = (packId: string) => {
+  const handleDeletePack = async (packId: string) => {
     if (!activeInstance || !onUpdateInstance) return;
+    const pack = (activeInstance.packs || []).find((p) => p.id === packId);
+    if (!pack) return;
     playMinecraftClickSound();
-    const updatedPacks = (activeInstance.packs || []).filter((p) => p.id !== packId);
-    onUpdateInstance({ ...activeInstance, packs: updatedPacks });
+    try {
+      if (isTauriEnvironment()) {
+        await invokeDeleteInstanceAddon(activeInstance.id, pack.type, pack.filename, activeInstance.customGameDir);
+      }
+      onUpdateInstance({
+        ...activeInstance,
+        packs: (activeInstance.packs || []).filter((p) => p.id !== packId),
+      });
+    } catch (reason) {
+      setSearchError(`Could not delete ${pack.name}: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   const isItemInstalledInInstance = (name: string) => {

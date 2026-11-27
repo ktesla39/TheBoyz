@@ -55,6 +55,7 @@ import {
   invokeClearMicrosoftCredentials,
   invokeGetSystemHardware,
   invokeImportMinecraftInstance,
+  invokeCloneInstance,
   invokeCreateInstance,
   invokeDeleteInstance,
   invokeRenameInstanceFolder,
@@ -73,6 +74,7 @@ import { FirstRunAccountChoiceModal } from './components/accounts/FirstRunAccoun
 import { CreateInstanceModal } from './components/instances/CreateInstanceModal';
 import { SkinProvider, SkinModel } from './types/auth';
 import { UpdatePrompt } from './components/common/UpdatePrompt';
+import { setSoundEffectsEnabled } from './services/soundService';
 
 export default function App() {
   // Master Launcher Persistent State
@@ -84,6 +86,10 @@ export default function App() {
   const [servers, setServers] = useState<ServerBookmark[]>(loadSavedServers);
   const [inspectingInstanceId, setInspectingInstanceId] = useState<string | null>(null);
   const [settings, setSettings] = useState<LauncherSettings>(loadSettings);
+
+  useEffect(() => {
+    setSoundEffectsEnabled(settings.soundEffectsEnabled !== false);
+  }, [settings.soundEffectsEnabled]);
 
   // Navigation & UI State
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
@@ -120,12 +126,6 @@ export default function App() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (isFirstRunAccountChoiceOpen) {
-      markFirstRunAccountChoiceShown();
-    }
-  }, [isFirstRunAccountChoiceOpen]);
 
   // Apply Theme, Button Colors & Low-Spec Mode to Root
   useEffect(() => {
@@ -429,7 +429,12 @@ export default function App() {
       const currentPath = instanceToLaunch.javaConfig.path.trim().toLowerCase();
       const configured = detected.find((java) => java.path.trim().toLowerCase() === currentPath);
       const configuredMajor = configured?.major_version ?? instanceToLaunch.javaConfig.version;
-      const configuredIsCompatible = Boolean(currentPath) && (requiredJava === null || configuredMajor >= requiredJava);
+      // Forge for Minecraft 1.16 and older relies on LaunchWrapper, which only works on Java 8;
+      // "newer is fine" would otherwise send it to Java 17/21 and crash at startup.
+      const needsExactJava8 = requiredJava === 8 && instanceToLaunch.loader === 'forge';
+      const configuredIsCompatible = Boolean(currentPath)
+        && (requiredJava === null
+          || (configuredMajor >= requiredJava && !(needsExactJava8 && configuredMajor > 8)));
       if (!configuredIsCompatible) {
         const recommended = requiredJava === null
           ? detected[0]
@@ -503,7 +508,8 @@ export default function App() {
         instanceToLaunch,
         launchAccount,
         serverAddress,
-        settings.lowSpecMode || hardwareInfo?.is_low_spec === true
+        settings.lowSpecMode || hardwareInfo?.is_low_spec === true,
+        settings.dedicatedGpuOffload
       );
       if (!result.success || result.pid === null) {
         throw new Error(result.message || 'The launcher did not return a game process ID.');
@@ -706,8 +712,16 @@ export default function App() {
     await handleAddInstance(instance);
   };
 
-  const handleDeleteInstance = async (id: string) => {
-    if (instances.length <= 1) return;
+  const handleDeleteInstance = async (id: string): Promise<boolean> => {
+    if (instances.length <= 1) return false;
+    const doomed = instances.find((instance) => instance.id === id);
+    if (
+      !window.confirm(
+        `Delete "${doomed?.name ?? 'this instance'}"? Its mods, worlds and settings on disk will be permanently removed.`
+      )
+    ) {
+      return false;
+    }
     try {
       if (isTauriEnvironment()) {
         await invokeDeleteInstance(id);
@@ -718,16 +732,17 @@ export default function App() {
           reason instanceof Error ? reason.message : String(reason)
         }`
       );
-      return;
+      return false;
     }
     const remaining = instances.filter((i) => i.id !== id);
     setInstances(remaining);
     if (activeInstanceId === id) {
       setActiveInstanceId(remaining[0].id);
     }
+    return true;
   };
 
-  const handleCloneInstance = (id: string) => {
+  const handleCloneInstance = async (id: string) => {
     const target = instances.find((i) => i.id === id);
     if (!target) return;
 
@@ -742,11 +757,17 @@ export default function App() {
       packs: [...target.packs],
       worlds: target.worlds ? [...target.worlds] : [],
       screenshots: target.screenshots ? [...target.screenshots] : [],
-      backups: target.backups ? [...target.backups] : [],
+      backups: [],
     };
-    void handleAddInstance(cloned).catch((reason) => {
+    try {
+      if (isTauriEnvironment()) {
+        await invokeCloneInstance(target.id, cloned.id, cloned.name, target.customGameDir);
+      }
+      setInstances((current) => [cloned, ...current]);
+      setActiveInstanceId(cloned.id);
+    } catch (reason) {
       window.alert(`Could not clone the instance profile: ${reason instanceof Error ? reason.message : String(reason)}`);
-    });
+    }
   };
 
   const handleUpdateInstance = (updated: MinecraftInstance) => {
@@ -787,7 +808,10 @@ export default function App() {
 
   const handleInstallMod = (mod: InstalledMod) => {
     if (!activeInstance) return;
-    const updated = [...activeInstance.mods, mod];
+    const updated = [
+      ...activeInstance.mods.filter((existing) => existing.id !== mod.id && existing.filename !== mod.filename),
+      mod,
+    ];
     handleUpdateMods(activeInstance.id, updated);
   };
 
@@ -972,9 +996,10 @@ export default function App() {
               }}
               onUpdateInstance={handleUpdateInstance}
               onCloneInstance={() => handleCloneInstance(inspectingInstance.id)}
-              onDeleteInstance={() => {
-                handleDeleteInstance(inspectingInstance.id);
-                setInspectingInstanceId(null);
+              onDeleteInstance={async () => {
+                if (await handleDeleteInstance(inspectingInstance.id)) {
+                  setInspectingInstanceId(null);
+                }
               }}
             />
           ) : currentTab === 'instances' ? (
@@ -1145,10 +1170,12 @@ export default function App() {
       {isFirstRunAccountChoiceOpen && (
         <FirstRunAccountChoiceModal
           onChooseOffline={() => {
+            markFirstRunAccountChoiceShown();
             setIsFirstRunAccountChoiceOpen(false);
             setIsFirstRunOfflineModalOpen(true);
           }}
           onChooseMicrosoft={() => {
+            markFirstRunAccountChoiceShown();
             setIsFirstRunAccountChoiceOpen(false);
             setIsFirstRunMicrosoftModalOpen(true);
           }}
@@ -1164,7 +1191,7 @@ export default function App() {
         onClose={() => setIsFirstRunMicrosoftModalOpen(false)}
         onAccountAdded={handleAddAccount}
       />
-      <UpdatePrompt />
+      <UpdatePrompt autoCheck={settings.autoUpdateChecks} />
     </div>
   );
 }

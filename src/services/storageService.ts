@@ -20,7 +20,7 @@ export interface LauncherSettings {
   customSurfaceColor?: string;
   buttonStyle: 'classic_mc' | 'modern_deepslate' | 'futuristic_glow';
   launcherIcon?: string;
-  buttonColorTheme?: 'emerald' | 'diamond' | 'redstone' | 'amber' | 'purple' | 'obsidian' | 'custom';
+  buttonColorTheme?: 'emerald' | 'diamond' | 'redstone' | 'amber' | 'purple' | 'copper' | 'lapis' | 'obsidian' | 'netherite' | 'prismarine' | 'custom';
   customButtonColor?: string;
   soundEffectsEnabled: boolean;
   lowSpecMode: boolean;
@@ -60,19 +60,71 @@ function readStoredArray<T>(key: string): T[] {
   const raw = localStorage.getItem(key);
   if (raw === null) return [];
 
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as T[];
     throw new Error(`Stored value "${key}" must be an array.`);
+  } catch (reason) {
+    preserveInvalidStoredValue(key, raw, reason);
+    return [];
   }
-  return parsed as T[];
+}
+
+function preserveInvalidStoredValue(key: string, raw: string, reason: unknown): void {
+  const backupKey = `${key}_invalid_${Date.now()}`;
+  try {
+    localStorage.setItem(backupKey, raw);
+  } catch (backupReason) {
+    console.error(`Could not preserve invalid launcher data from "${key}".`, backupReason);
+  }
+  console.error(`Launcher data in "${key}" is invalid; using an empty/default value.`, reason);
+}
+
+/** Fills fields that older or hand-edited saves may lack so the UI never reads undefined. */
+function normalizeInstance(raw: MinecraftInstance): MinecraftInstance {
+  const javaConfig = (raw.javaConfig ?? {}) as Partial<MinecraftInstance['javaConfig']>;
+  const resolution = (raw.resolution ?? {}) as Partial<MinecraftInstance['resolution']>;
+  return {
+    ...raw,
+    graphicsApi: raw.graphicsApi ?? 'auto',
+    javaConfig: {
+      path: javaConfig.path ?? '',
+      version: javaConfig.version ?? 17,
+      minMemoryMb: javaConfig.minMemoryMb ?? 2048,
+      maxMemoryMb: javaConfig.maxMemoryMb ?? 4096,
+      jvmArguments: javaConfig.jvmArguments ?? [],
+      garbageCollector: javaConfig.garbageCollector ?? 'G1GC',
+    },
+    resolution: {
+      width: resolution.width ?? 1920,
+      height: resolution.height ?? 1080,
+      fullscreen: resolution.fullscreen ?? false,
+    },
+    mods: raw.mods ?? [],
+    packs: raw.packs ?? [],
+    worlds: raw.worlds ?? [],
+    screenshots: raw.screenshots ?? [],
+    backups: raw.backups ?? [],
+  };
 }
 
 export function loadSavedInstances(): MinecraftInstance[] {
-  return readStoredArray<MinecraftInstance>(STORAGE_KEYS.INSTANCES);
+  return readStoredArray<MinecraftInstance>(STORAGE_KEYS.INSTANCES)
+    .filter((instance) => instance && typeof instance === 'object' && typeof instance.id === 'string')
+    .map(normalizeInstance);
+}
+
+function writeStored(key: string, value: string): void {
+  // Storage can be full (large data-URL icons/skins) or unavailable; never let that crash the UI.
+  try {
+    localStorage.setItem(key, value);
+  } catch (reason) {
+    console.error(`Could not save launcher data for "${key}".`, reason);
+  }
 }
 
 export function saveInstances(instances: MinecraftInstance[]): void {
-  localStorage.setItem(STORAGE_KEYS.INSTANCES, JSON.stringify(instances));
+  writeStored(STORAGE_KEYS.INSTANCES, JSON.stringify(instances));
 }
 
 export function loadSavedAccounts(): LauncherAccount[] {
@@ -85,15 +137,18 @@ export function saveAccounts(accounts: LauncherAccount[]): void {
     const { accessToken: _accessToken, refreshToken: _refreshToken, ...profile } = account;
     return profile;
   });
-  localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(safeAccounts));
+  writeStored(STORAGE_KEYS.ACCOUNTS, JSON.stringify(safeAccounts));
 }
 
 export function loadSavedServers(): ServerBookmark[] {
-  return readStoredArray<ServerBookmark>(STORAGE_KEYS.SERVERS);
+  // A ping that was in flight when the launcher closed would otherwise stay "checking" forever.
+  return readStoredArray<ServerBookmark>(STORAGE_KEYS.SERVERS).map((server) =>
+    server.status === 'checking' ? { ...server, status: 'offline' as const } : server
+  );
 }
 
 export function saveServers(servers: ServerBookmark[]): void {
-  localStorage.setItem(STORAGE_KEYS.SERVERS, JSON.stringify(servers));
+  writeStored(STORAGE_KEYS.SERVERS, JSON.stringify(servers));
 }
 
 export function loadActiveInstanceId(): string {
@@ -101,7 +156,7 @@ export function loadActiveInstanceId(): string {
 }
 
 export function saveActiveInstanceId(id: string): void {
-  localStorage.setItem(STORAGE_KEYS.ACTIVE_INSTANCE, id);
+  writeStored(STORAGE_KEYS.ACTIVE_INSTANCE, id);
 }
 
 export function loadActiveAccountId(): string {
@@ -109,23 +164,32 @@ export function loadActiveAccountId(): string {
 }
 
 export function saveActiveAccountId(id: string): void {
-  localStorage.setItem(STORAGE_KEYS.ACTIVE_ACCOUNT, id);
+  writeStored(STORAGE_KEYS.ACTIVE_ACCOUNT, id);
 }
 
 export function loadSettings(): LauncherSettings {
   const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
   if (raw === null) return DEFAULT_SETTINGS;
-  const saved = JSON.parse(raw) as Partial<LauncherSettings> & { closeAfterLaunch?: boolean };
-  return {
-    ...DEFAULT_SETTINGS,
-    ...saved,
-    afterLaunchAction:
-      saved.afterLaunchAction ?? (saved.closeAfterLaunch ? 'close' : DEFAULT_SETTINGS.afterLaunchAction),
-  };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`Stored value "${STORAGE_KEYS.SETTINGS}" must be an object.`);
+    }
+    const saved = parsed as Partial<LauncherSettings> & { closeAfterLaunch?: boolean };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...saved,
+      afterLaunchAction:
+        saved.afterLaunchAction ?? (saved.closeAfterLaunch ? 'close' : DEFAULT_SETTINGS.afterLaunchAction),
+    };
+  } catch (reason) {
+    preserveInvalidStoredValue(STORAGE_KEYS.SETTINGS, raw, reason);
+    return DEFAULT_SETTINGS;
+  }
 }
 
 export function saveSettings(settings: LauncherSettings): void {
-  localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  writeStored(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
 }
 
 export function hasShownFirstRunAccountChoice(): boolean {
@@ -133,5 +197,5 @@ export function hasShownFirstRunAccountChoice(): boolean {
 }
 
 export function markFirstRunAccountChoiceShown(): void {
-  localStorage.setItem(STORAGE_KEYS.FIRST_RUN_ACCOUNT_CHOICE, 'true');
+  writeStored(STORAGE_KEYS.FIRST_RUN_ACCOUNT_CHOICE, 'true');
 }

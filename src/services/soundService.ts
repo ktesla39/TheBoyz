@@ -2,9 +2,15 @@
 // Zero external network requests, zero latency, 100% offline-ready
 
 let audioCtx: AudioContext | null = null;
+let soundEffectsEnabled = true;
+
+/** Mirrors the "Sound effects" launcher setting; when off no UI sound is synthesized. */
+export function setSoundEffectsEnabled(enabled: boolean): void {
+  soundEffectsEnabled = enabled;
+}
 
 function getAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined' || !soundEffectsEnabled) return null;
   if (!audioCtx) {
     const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (AudioCtxClass) {

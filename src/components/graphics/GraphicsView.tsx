@@ -43,7 +43,7 @@ export const GraphicsView: React.FC<GraphicsViewProps> = ({
 
   if (!hardware) return null;
 
-  const currentApi = activeInstance?.graphicsApi || 'opengl';
+  const currentApi = activeInstance?.graphicsApi || 'auto';
   const report = getGraphicsApiReport(currentApi, hardware);
   const scanGraphicsApis = async () => {
     if (!isTauriEnvironment()) {

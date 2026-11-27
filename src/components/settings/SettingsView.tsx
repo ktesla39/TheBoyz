@@ -92,6 +92,9 @@ const LAUNCHER_ICON_PRESETS = [
   { id: 'shield', label: 'Knight Shield', icon: MinecraftShieldIcon, tag: 'Armor' },
 ];
 
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const isHexColor = (value: string | undefined): value is string => !!value && HEX_COLOR.test(value);
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
@@ -118,6 +121,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Sync theme changes live immediately to document root and state
   const applyLiveChanges = (updated: LauncherSettings) => {
+    // Text colour fields pass through partial values like "#10b" while typing; keep them in the
+    // form but never apply or persist a colour the theme engine cannot parse.
+    if (
+      !isHexColor(updated.customBgColor) ||
+      !isHexColor(updated.customSurfaceColor) ||
+      !isHexColor(updated.customAccentColor) ||
+      (updated.buttonColorTheme === 'custom' && !isHexColor(updated.customButtonColor))
+    ) {
+      return;
+    }
     applyLauncherTheme(
       updated.themePreset,
       {
@@ -153,7 +166,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const preset = BUTTON_COLOR_PRESETS[colorKey];
     const updated: LauncherSettings = {
       ...localSettings,
-      buttonColorTheme: colorKey as any,
+      buttonColorTheme: colorKey as NonNullable<LauncherSettings['buttonColorTheme']>,
       customButtonColor: preset ? preset.bg : localSettings.customButtonColor,
       customAccentColor: preset ? preset.accent : localSettings.customAccentColor,
     };
@@ -292,9 +305,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSave = () => {
     playMinecraftLevelUpSound();
-    saveSettings(localSettings);
-    onUpdateSettings(localSettings);
-    applyLiveChanges(localSettings);
+    const sanitized: LauncherSettings = {
+      ...localSettings,
+      customBgColor: isHexColor(localSettings.customBgColor) ? localSettings.customBgColor : settings.customBgColor,
+      customSurfaceColor: isHexColor(localSettings.customSurfaceColor) ? localSettings.customSurfaceColor : settings.customSurfaceColor,
+      customAccentColor: isHexColor(localSettings.customAccentColor) ? localSettings.customAccentColor : settings.customAccentColor,
+      customButtonColor: isHexColor(localSettings.customButtonColor) ? localSettings.customButtonColor : settings.customButtonColor,
+    };
+    setLocalSettings(sanitized);
+    saveSettings(sanitized);
+    onUpdateSettings(sanitized);
+    applyLiveChanges(sanitized);
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   };
@@ -308,8 +329,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `theboys-settings-${Date.now()}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   const currentBtnTheme = localSettings.buttonColorTheme || 'emerald';

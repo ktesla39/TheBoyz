@@ -98,7 +98,7 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
     // Check loader compatibility
     const usesModLoader = addon.type === 'mod' || addon.type === 'modpack';
     const hasLoader = usesModLoader && addon.loaders && addon.loaders.length > 0;
-    const loaderMatches = !hasLoader || addon.loaders?.some((l) => l.toLowerCase() === instanceLoader.toLowerCase()) || instanceLoader === 'vanilla';
+    const loaderMatches = !hasLoader || addon.loaders?.some((l) => l.toLowerCase() === instanceLoader.toLowerCase());
 
     // Check version compatibility
     const versionMatches = addon.gameVersions.some((v) => {
@@ -106,7 +106,7 @@ export const AddonDetailModal: React.FC<AddonDetailModalProps> = ({
       // Partial prefix check, e.g. 1.21.x matches 1.21.4
       const partsA = v.split('.');
       const partsB = instanceVer.split('.');
-      return partsA[0] === partsB[0] && partsA[1] === partsB[1];
+      return partsA[1] !== undefined && partsA[0] === partsB[0] && partsA[1] === partsB[1];
     });
 
     if (loaderMatches && versionMatches) {

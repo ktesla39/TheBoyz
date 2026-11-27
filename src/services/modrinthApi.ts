@@ -55,3 +55,43 @@ export async function fetchProjectDetails(projectIdOrSlug: string): Promise<unkn
   }
   return response.json();
 }
+
+export async function fetchLatestProjectVersion(
+  projectId: string,
+  gameVersion: string,
+  loader?: ModLoaderType,
+): Promise<{ version_number: string } | null> {
+  const params = new URLSearchParams({ game_versions: JSON.stringify([gameVersion]) });
+  if (loader && loader !== 'vanilla') {
+    params.set('loaders', JSON.stringify([loader]));
+  }
+  const response = await fetch(
+    `${MODRINTH_API}/project/${encodeURIComponent(projectId)}/version?${params}`,
+    {
+      headers: {
+        'User-Agent': 'TheBoys-MinecraftLauncher/1.0.0 (contact@theboyslauncher.dev)',
+      },
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Modrinth version lookup failed with status ${response.status}`);
+  }
+
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error('Modrinth returned an invalid project version list.');
+  }
+  if (data.length === 0) return null;
+
+  const latest = data[0];
+  if (
+    !latest ||
+    typeof latest !== 'object' ||
+    !('version_number' in latest) ||
+    typeof latest.version_number !== 'string'
+  ) {
+    throw new Error('Modrinth returned an invalid project version.');
+  }
+  return { version_number: latest.version_number };
+}

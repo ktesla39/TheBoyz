@@ -121,25 +121,30 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
       .finally(() => {
         if (!cancelled) setLoadingVersions(false);
       });
-    setName('');
-      setSelectedIcon('diamond_sword');
-      setCustomIconDataUrl(null);
-      setGameVersion('');
-      setLoader('vanilla');
-      setLoaderVersion('');
-      setUseCustomDir(false);
-      setCustomGameDir('');
-      setMinRamMb(2048);
-      setMaxRamMb(4096);
-      setJavaVersion(21);
-      setCustomJvmArgs(
-        '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch'
-      );
-      setActiveTab('essentials');
     return () => {
       cancelled = true;
     };
   }, [isOpen, manifestRequestId]);
+
+  // Reset the form only when the modal opens (not when the version list is retried).
+  useEffect(() => {
+    if (!isOpen) return;
+    setName('');
+    setSelectedIcon('diamond_sword');
+    setCustomIconDataUrl(null);
+    setGameVersion('');
+    setLoader('vanilla');
+    setLoaderVersion('');
+    setUseCustomDir(false);
+    setCustomGameDir('');
+    setMinRamMb(2048);
+    setMaxRamMb(4096);
+    setJavaVersion(21);
+    setCustomJvmArgs(
+      '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch'
+    );
+    setActiveTab('essentials');
+  }, [isOpen]);
 
   // Sync recommended Java when game version changes
   useEffect(() => {
@@ -578,7 +583,11 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                     max={8192}
                     step={256}
                     value={minRamMb}
-                    onChange={(e) => setMinRamMb(Number(e.target.value))}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      setMinRamMb(value);
+                      setMaxRamMb((current) => Math.max(current, value));
+                    }}
                     className="w-full accent-emerald-500 cursor-pointer"
                   />
                 </div>
@@ -594,7 +603,11 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                     max={16384}
                     step={512}
                     value={maxRamMb}
-                    onChange={(e) => setMaxRamMb(Number(e.target.value))}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      setMaxRamMb(value);
+                      setMinRamMb((current) => Math.min(current, value));
+                    }}
                     className="w-full accent-emerald-500 cursor-pointer"
                   />
                 </div>

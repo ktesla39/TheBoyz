@@ -320,8 +320,8 @@ export function applyLauncherTheme(
     : colorScheme;
   root.setAttribute('data-color-scheme', resolvedColorScheme);
   root.style.colorScheme = resolvedColorScheme;
-  const base = THEME_PRESETS[preset];
-  if (!base) throw new Error(`Unknown theme preset "${preset}".`);
+  // Saved settings can be stale or hand-edited; fall back instead of crashing the whole UI.
+  const base = THEME_PRESETS[preset] ?? THEME_PRESETS.obsidian;
   const config: ThemeConfig = {
     ...base,
     ...customConfig,
@@ -346,12 +346,9 @@ export function applyLauncherTheme(
 
   // Apply button color theme dynamically
   const shades =
-    buttonTheme === 'custom'
-      ? customBtnHex
-        ? generateButtonShades(customBtnHex)
-        : null
-      : BUTTON_COLOR_PRESETS[buttonTheme] ?? null;
-  if (!shades) throw new Error(`No button colors are configured for "${buttonTheme}".`);
+    (buttonTheme === 'custom' && customBtnHex
+      ? generateButtonShades(customBtnHex)
+      : BUTTON_COLOR_PRESETS[buttonTheme]) ?? BUTTON_COLOR_PRESETS.emerald;
 
   root.style.setProperty('--mc-btn-primary', shades.bg);
   root.style.setProperty('--mc-btn-primary-hover', shades.bgHover);

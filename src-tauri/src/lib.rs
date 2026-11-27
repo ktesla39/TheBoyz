@@ -11,7 +11,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 mod minecraft;
 
-static RUNNING_PROCESSES: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+static RUNNING_PROCESSES: Mutex<Option<HashMap<String, std::process::Child>>> = Mutex::new(None);
 const MICROSOFT_AUTH_SCOPES: &str = "XboxLive.signin offline_access";
 
 fn microsoft_oauth_form(parameters: &[(&str, &str)]) -> HashMap<String, String> {
@@ -300,17 +300,28 @@ pub(crate) fn resolve_instance_directory(
             {
                 continue;
             }
+            // Modpack staging/backup leftovers are never real instances.
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".the-boys-modpack-")
+            {
+                continue;
+            }
             let candidate = entry.path();
             let metadata_path = candidate.join("instance.json");
             let metadata = match fs::read(&metadata_path) {
-                Ok(bytes) => {
-                    serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
-                        format!(
-                            "Could not read instance metadata at {}: {error}",
+                Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        // One damaged folder must not break every other instance.
+                        log::warn!(
+                            "Skipping unreadable instance metadata at {}: {error}",
                             metadata_path.display()
-                        )
-                    })?
-                }
+                        );
+                        continue;
+                    }
+                },
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
                     return Err(format!(
@@ -822,9 +833,18 @@ fn collect_system_hardware() -> Result<HardwareInfo, String> {
         .ok_or_else(|| "The system did not report a CPU model.".to_string())?;
 
     let disks = Disks::new_with_refreshed_list();
-    let disk_free_gb = disks
-        .list()
-        .first()
+    // Report the disk that actually holds launcher data (longest matching mount point), not
+    // whichever disk the OS happens to list first (often a tiny system/EFI partition).
+    let data_dir = get_app_data_dir().ok();
+    let data_disk = data_dir.as_ref().and_then(|dir| {
+        disks
+            .list()
+            .iter()
+            .filter(|disk| dir.starts_with(disk.mount_point()))
+            .max_by_key(|disk| disk.mount_point().as_os_str().len())
+    });
+    let disk_free_gb = data_disk
+        .or_else(|| disks.list().first())
         .map(|d| d.available_space() / (1024 * 1024 * 1024))
         .ok_or_else(|| "The system did not report an available disk.".to_string())?;
 
@@ -1047,16 +1067,25 @@ async fn launch_game(app: AppHandle, payload: LaunchRequest) -> Result<LaunchRes
         .lock()
         .map_err(|_| "The launcher process registry is unavailable.".to_string())?;
     let processes = running.get_or_insert_with(HashMap::new);
-    if let Some(pid) = processes.get(&payload.instance_id) {
-        let mut system = System::new();
-        system.refresh_processes();
-        if system.process(sysinfo::Pid::from_u32(*pid)).is_some() {
-            return Err(format!(
-                "Instance '{}' is already running (process {pid}).",
-                payload.instance_name
-            ));
+    if let Some(child) = processes.get_mut(&payload.instance_id) {
+        match child.try_wait() {
+            Ok(None) => {
+                return Err(format!(
+                    "Instance '{}' is already running (process {}).",
+                    payload.instance_name,
+                    child.id()
+                ));
+            }
+            Ok(Some(_)) => {
+                processes.remove(&payload.instance_id);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Could not check the existing game process for '{}': {error}",
+                    payload.instance_name
+                ));
+            }
         }
-        processes.remove(&payload.instance_id);
     }
     let mut game_command = Command::new(&java_bin);
     suppress_console_window(&mut game_command);
@@ -1067,7 +1096,7 @@ async fn launch_game(app: AppHandle, payload: LaunchRequest) -> Result<LaunchRes
         .map_err(|error| format!("Failed to start Java at \"{java_bin}\": {error}"))?;
     let spawned_pid = child.id();
     minecraft::emit_launcher_progress("started", "Minecraft started", None, 0, None);
-    processes.insert(payload.instance_id.clone(), spawned_pid);
+    processes.insert(payload.instance_id.clone(), child);
     drop(running);
     let mut safe_args = args.clone();
     for index in 0..safe_args.len().saturating_sub(1) {
@@ -1091,13 +1120,19 @@ async fn launch_game(app: AppHandle, payload: LaunchRequest) -> Result<LaunchRes
     })
 }
 
-fn java_major_version(version_output: &str) -> Option<u32> {
-    let version = version_output
+/// Extracts the quoted version string from `java -version` output, skipping unrelated
+/// lines such as "Picked up JAVA_TOOL_OPTIONS: ...".
+fn java_version_string(version_output: &str) -> Option<&str> {
+    version_output
         .lines()
-        .find(|line| line.to_lowercase().contains("version"))?
-        .split('"')
-        .nth(1)?;
-    let mut parts = version.split('.');
+        .filter(|line| line.to_lowercase().contains("version"))
+        .find_map(|line| line.split('"').nth(1))
+}
+
+fn java_major_version(version_output: &str) -> Option<u32> {
+    let version = java_version_string(version_output)?;
+    // Handles "1.8.0_292", "17.0.1+12", "21", and early-access builds such as "21-ea".
+    let mut parts = version.split(|character: char| matches!(character, '.' | '_' | '-' | '+'));
     let first = parts.next()?.parse::<u32>().ok()?;
     if first == 1 {
         parts.next()?.parse::<u32>().ok()
@@ -1130,23 +1165,30 @@ fn stop_game_sync(pid: u32) -> Result<bool, String> {
     let processes = running.get_or_insert_with(HashMap::new);
     let Some(instance_id) = processes
         .iter()
-        .find_map(|(instance_id, tracked_pid)| (*tracked_pid == pid).then(|| instance_id.clone()))
+        .find_map(|(instance_id, child)| (child.id() == pid).then(|| instance_id.clone()))
     else {
         return Err("The requested process was not started by this launcher session.".to_string());
     };
-    let mut s = System::new();
-    s.refresh_processes();
-    let sys_pid = sysinfo::Pid::from_u32(pid);
-    if let Some(process) = s.process(sys_pid) {
-        if !process.kill() {
-            return Err(format!("Could not stop game process {pid}."));
+    let child = processes
+        .get_mut(&instance_id)
+        .ok_or_else(|| "The tracked game process is no longer available.".to_string())?;
+    let was_running = match child
+        .try_wait()
+        .map_err(|error| format!("Could not inspect game process {pid}: {error}"))?
+    {
+        Some(_) => false,
+        None => {
+            child
+                .kill()
+                .map_err(|error| format!("Could not stop game process {pid}: {error}"))?;
+            child
+                .wait()
+                .map_err(|error| format!("Could not wait for game process {pid}: {error}"))?;
+            true
         }
-        processes.remove(&instance_id);
-        Ok(true)
-    } else {
-        processes.remove(&instance_id);
-        Ok(false)
-    }
+    };
+    processes.remove(&instance_id);
+    Ok(was_running)
 }
 
 /// Checks if a PID is actively executing
@@ -1162,15 +1204,21 @@ fn is_game_running_sync(pid: u32) -> Result<bool, String> {
         .lock()
         .map_err(|_| "The launcher process registry is unavailable.".to_string())?;
     let processes = running.get_or_insert_with(HashMap::new);
-    if !processes.values().any(|tracked_pid| *tracked_pid == pid) {
+    let Some(instance_id) = processes
+        .iter()
+        .find_map(|(instance_id, child)| (child.id() == pid).then(|| instance_id.clone()))
+    else {
         return Ok(false);
-    }
-    let mut s = System::new();
-    s.refresh_processes();
-    let sys_pid = sysinfo::Pid::from_u32(pid);
-    let active = s.process(sys_pid).is_some();
+    };
+    let child = processes
+        .get_mut(&instance_id)
+        .ok_or_else(|| "The tracked game process is no longer available.".to_string())?;
+    let active = child
+        .try_wait()
+        .map_err(|error| format!("Could not inspect game process {pid}: {error}"))?
+        .is_none();
     if !active {
-        processes.retain(|_, tracked_pid| *tracked_pid != pid);
+        processes.remove(&instance_id);
     }
     Ok(active)
 }
@@ -1187,11 +1235,7 @@ fn inspect_java_binary(version_binary: &Path, launch_binary: &Path) -> Option<Ja
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let full_version = version_output
-        .lines()
-        .find(|line| line.to_lowercase().contains("version"))
-        .and_then(|line| line.split('"').nth(1))?
-        .to_string();
+    let full_version = java_version_string(&version_output)?.to_string();
     let major_version = java_major_version(&version_output)?;
     let first_line = version_output
         .lines()
@@ -1392,8 +1436,16 @@ async fn validate_java_path(java_path: String) -> Result<bool, String> {
 #[tauri::command]
 async fn fetch_ely_by_skin(username: String) -> Result<ElyBySkinResponse, String> {
     let clean = username.trim();
-    let skin_url = format!("http://skinsystem.ely.by/textures/{}", clean);
-    let cape_url = format!("http://skinsystem.ely.by/cloaks/{}", clean);
+    if clean.is_empty()
+        || clean.len() > 32
+        || !clean
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err("Ely.by usernames may only contain letters, numbers and underscores.".to_string());
+    }
+    let skin_url = format!("http://skinsystem.ely.by/skins/{clean}.png");
+    let cape_url = format!("http://skinsystem.ely.by/cloaks/{clean}.png");
 
     Ok(ElyBySkinResponse {
         username: clean.to_string(),
@@ -1580,6 +1632,14 @@ fn request_minecraft_status(
 /// Performs the Minecraft Server List Ping handshake and reads status metadata.
 #[tauri::command]
 async fn ping_minecraft_server(address: String) -> Result<ServerPingResult, String> {
+    // DNS lookups and socket I/O below are blocking; keep them off the async runtime threads
+    // so a slow or dead server cannot stall every other command.
+    tokio::task::spawn_blocking(move || ping_minecraft_server_blocking(address))
+        .await
+        .map_err(|error| format!("Server ping task failed: {error}"))?
+}
+
+fn ping_minecraft_server_blocking(address: String) -> Result<ServerPingResult, String> {
     let clean = address.trim().to_string();
     if clean.is_empty() {
         return Err("Server address is required.".to_string());
@@ -1948,11 +2008,24 @@ fn list_instances() -> Result<Vec<InstanceItem>, String> {
     let entries = fs::read_dir(&instances_dir).map_err(|error| error.to_string())?;
     for entry in entries {
         let path = entry.map_err(|error| error.to_string())?.path();
-        if path.is_dir() {
-            let metadata: InstanceMetadata = serde_json::from_slice(
-                &fs::read(path.join("instance.json")).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| format!("Invalid instance metadata at {}: {error}", path.display()))?;
+        let is_modpack_leftover = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(".the-boys-modpack-"));
+        if path.is_dir() && !is_modpack_leftover {
+            // One damaged or unrelated folder must not hide every other instance.
+            let metadata = match fs::read(path.join("instance.json"))
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    serde_json::from_slice::<InstanceMetadata>(&bytes)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    log::warn!("Skipping instance folder {}: {error}", path.display());
+                    continue;
+                }
+            };
             list.push(InstanceItem {
                 id: metadata.id,
                 name: metadata.name,
@@ -1991,12 +2064,18 @@ fn loader_from_identifier(identifier: &str) -> (String, Option<String>) {
         ("-forge-", "forge"),
         ("forge-", "forge"),
     ] {
-        if let Some(version) = identifier
-            .split_once(marker)
-            .map(|(_, suffix)| suffix.split('-').next().unwrap_or_default())
-            .filter(|version| !version.is_empty())
-        {
-            return (loader.to_string(), Some(version.to_string()));
+        if let Some((_, suffix)) = identifier.split_once(marker) {
+            let mut versions = suffix.split('-').filter(|version| !version.is_empty());
+            let mut version = versions.next();
+            if loader == "forge"
+                && marker == "forge-"
+                && version.is_some_and(|version| version.starts_with("1."))
+            {
+                version = versions.next();
+            }
+            if let Some(version) = version {
+                return (loader.to_string(), Some(version.to_string()));
+            }
         }
     }
     ("vanilla".to_string(), None)
@@ -2152,10 +2231,21 @@ fn detect_import_metadata(game_dir: &Path) -> Result<(String, String, Option<Str
             if !metadata_path.is_file() {
                 continue;
             }
-            let bytes = fs::read(&metadata_path)
-                .map_err(|error| format!("Could not read {}: {error}", metadata_path.display()))?;
-            let metadata: serde_json::Value = serde_json::from_slice(&bytes)
-                .map_err(|error| format!("Invalid Minecraft version metadata: {error}"))?;
+            // A single broken version folder must not block importing the rest of the install.
+            let metadata: serde_json::Value = match fs::read(&metadata_path)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+                }) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    log::warn!(
+                        "Skipping unreadable version metadata {}: {error}",
+                        metadata_path.display()
+                    );
+                    continue;
+                }
+            };
             let game_version = metadata
                 .get("inheritsFrom")
                 .and_then(serde_json::Value::as_str)
@@ -2266,6 +2356,60 @@ fn is_import_game_directory(path: &Path) -> bool {
     .any(|entry| path.join(entry).exists())
 }
 
+fn profile_game_directory(path: &Path) -> Result<Option<PathBuf>, String> {
+    for profile_file in [
+        "launcher_profiles.json",
+        "sklauncher_profiles.json",
+        "profiles.json",
+        "profile.json",
+    ] {
+        let profiles_path = path.join(profile_file);
+        if !profiles_path.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&profiles_path)
+            .map_err(|error| format!("Could not read {}: {error}", profiles_path.display()))?;
+        let profiles: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Invalid launcher profile metadata: {error}"))?;
+        let profile_list: Vec<&serde_json::Value> = profiles
+            .get("profiles")
+            .and_then(serde_json::Value::as_object)
+            .map(|profiles| profiles.values().collect())
+            .or_else(|| {
+                profiles
+                    .get("profiles")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|profiles| profiles.iter().collect())
+            })
+            .unwrap_or_else(|| vec![&profiles]);
+        for profile in profile_list {
+            let Some(game_dir) = profile
+                .get("gameDir")
+                .or_else(|| profile.get("game_dir"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let candidate = PathBuf::from(game_dir);
+            let candidate = if candidate.is_absolute() {
+                candidate
+            } else {
+                path.join(candidate)
+            };
+            if candidate.is_dir() {
+                return candidate.canonicalize().map(Some).map_err(|error| {
+                    format!(
+                        "Could not resolve profile game directory {}: {error}",
+                        candidate.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn has_importable_game_data(path: &Path) -> bool {
     [
         "versions",
@@ -2302,12 +2446,26 @@ fn resolve_import_directories(selected_path: &Path) -> Result<(PathBuf, PathBuf)
         let parent_game_dir = versions_dir
             .parent()
             .ok_or_else(|| "Could not locate the Minecraft game directory.".to_string())?;
+        if let Some(game_dir) = profile_game_directory(selected_path)? {
+            return Ok((game_dir, selected_path.to_path_buf()));
+        }
+
         let game_dir = if has_importable_game_data(selected_path) {
             selected_path
         } else {
             parent_game_dir
         };
         return Ok((game_dir.to_path_buf(), selected_path.to_path_buf()));
+    }
+
+    if let Some(profile_game_dir) = profile_game_directory(selected_path)? {
+        let metadata_dir = selected_path.canonicalize().map_err(|error| {
+            format!(
+                "Could not resolve imported profile directory {}: {error}",
+                selected_path.display()
+            )
+        })?;
+        return Ok((profile_game_dir, metadata_dir));
     }
 
     let game_dir = if has_importable_game_data(selected_path) {
@@ -2679,21 +2837,66 @@ fn restore_main_window(app: &AppHandle) {
     }
 }
 
-/// Clones an instance directory
-#[tauri::command]
-fn clone_instance(source_id: String, target_id: String) -> Result<bool, String> {
-    validate_instance_id(&source_id)?;
-    validate_instance_id(&target_id)?;
-    let instances_dir = get_app_data_dir()?.join("instances");
-    let src = instances_dir.join(&source_id);
-    let dst = instances_dir.join(&target_id);
-    if !src.is_dir() {
+fn clone_instance_directory(
+    source: &Path,
+    destination: &Path,
+    target_id: &str,
+    target_name: &str,
+) -> Result<(), String> {
+    if !source.is_dir() {
         return Err("Source instance does not exist.".to_string());
     }
-    if dst.exists() {
+    if destination.exists() {
         return Err("Target instance already exists.".to_string());
     }
-    copy_instance_directory(&src, &dst)?;
+
+    let clone_result = (|| {
+        copy_instance_directory(source, destination)?;
+        let metadata_path = destination.join("instance.json");
+        let mut metadata: InstanceMetadata = serde_json::from_slice(
+            &fs::read(&metadata_path)
+                .map_err(|error| format!("Could not read source instance metadata: {error}"))?,
+        )
+        .map_err(|error| format!("Source instance metadata is invalid: {error}"))?;
+        metadata.id = target_id.to_string();
+        metadata.name = target_name.to_string();
+        fs::write(
+            metadata_path,
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("Could not save cloned instance metadata: {error}"))?;
+        Ok::<(), String>(())
+    })();
+
+    if let Err(error) = clone_result {
+        return match fs::remove_dir_all(destination) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!(
+                "{error} Also failed to remove the incomplete clone: {cleanup_error}"
+            )),
+        };
+    }
+    Ok(())
+}
+
+/// Clones an instance directory and updates its persisted identity.
+#[tauri::command]
+fn clone_instance(
+    source_id: String,
+    target_id: String,
+    target_name: String,
+    source_custom_game_dir: Option<String>,
+) -> Result<bool, String> {
+    validate_instance_id(&source_id)?;
+    validate_instance_id(&target_id)?;
+    validate_instance_name(&target_name)?;
+    if source_id == target_id {
+        return Err("Source and target instance IDs must be different.".to_string());
+    }
+    let app_data_dir = get_app_data_dir()?;
+    let source = instance_game_dir(&source_id, source_custom_game_dir)?;
+    let destination = resolve_instance_directory(&app_data_dir, &target_id, Some(&target_name))?;
+    clone_instance_directory(&source, &destination, &target_id, &target_name)?;
     Ok(true)
 }
 
@@ -2826,6 +3029,126 @@ pub struct InstanceAddonItem {
     pub enabled: bool,
     pub size_bytes: u64,
     pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceWorldItem {
+    pub id: String,
+    pub name: String,
+    pub folder_name: String,
+    pub game_mode: String,
+    pub last_played: u64,
+    pub size_mb: u64,
+}
+
+fn directory_size(path: &Path) -> Result<u64, String> {
+    let mut total = 0u64;
+    let entries = fs::read_dir(path)
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Could not inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_dir() {
+            total = total.saturating_add(directory_size(&entry.path())?);
+        } else if file_type.is_file() {
+            total = total.saturating_add(
+                entry
+                    .metadata()
+                    .map_err(|error| {
+                        format!("Could not inspect {}: {error}", entry.path().display())
+                    })?
+                    .len(),
+            );
+        }
+    }
+    Ok(total)
+}
+
+#[tauri::command]
+fn list_instance_worlds(
+    instance_id: String,
+    custom_game_dir: Option<String>,
+) -> Result<Vec<InstanceWorldItem>, String> {
+    let saves_dir = instance_game_dir(&instance_id, custom_game_dir)?.join("saves");
+    if !saves_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut worlds = Vec::new();
+    for entry in fs::read_dir(&saves_dir).map_err(|error| {
+        format!(
+            "Could not inspect worlds in {}: {error}",
+            saves_dir.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("Could not inspect a world folder: {error}"))?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("Could not inspect {}: {error}", entry.path().display()))?
+            .is_dir()
+        {
+            continue;
+        }
+
+        let folder_name = entry.file_name().to_string_lossy().into_owned();
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("Could not inspect {}: {error}", entry.path().display()))?;
+        let last_played = metadata
+            .modified()
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let size_bytes = directory_size(&entry.path())?;
+        worlds.push(InstanceWorldItem {
+            id: folder_name.clone(),
+            name: folder_name.clone(),
+            folder_name,
+            game_mode: "unknown".to_string(),
+            last_played,
+            size_mb: size_bytes.saturating_add(1024 * 1024 - 1) / (1024 * 1024),
+        });
+    }
+    worlds.sort_by(|left, right| {
+        right
+            .last_played
+            .cmp(&left.last_played)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(worlds)
+}
+
+#[tauri::command]
+fn delete_instance_world(
+    instance_id: String,
+    folder_name: String,
+    custom_game_dir: Option<String>,
+) -> Result<bool, String> {
+    if folder_name.is_empty()
+        || folder_name == "."
+        || folder_name == ".."
+        || folder_name.contains(['/', '\\', ':'])
+        || folder_name.chars().any(char::is_control)
+    {
+        return Err("Invalid world folder name.".to_string());
+    }
+    let saves_dir = instance_game_dir(&instance_id, custom_game_dir)?.join("saves");
+    let world_dir = saves_dir.join(&folder_name);
+    let file_type = fs::symlink_metadata(&world_dir)
+        .map_err(|error| format!("Could not inspect world {}: {error}", world_dir.display()))?
+        .file_type();
+    if !file_type.is_dir() {
+        return Err("The selected world is not a directory.".to_string());
+    }
+    fs::remove_dir_all(&world_dir)
+        .map_err(|error| format!("Could not delete world {}: {error}", world_dir.display()))?;
+    Ok(true)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -3005,18 +3328,36 @@ async fn install_instance_addon(
         }
 
         let req_gv = request.game_version.as_deref().unwrap_or("");
+        let req_loader = if request.addon_type.eq_ignore_ascii_case("mod")
+            || request.addon_type.eq_ignore_ascii_case("mods")
+        {
+            request.loader.as_deref().unwrap_or("").to_ascii_lowercase()
+        } else {
+            String::new()
+        };
+        const CURSEFORGE_LOADER_TAGS: [&str; 4] = ["fabric", "forge", "neoforge", "quilt"];
         let chosen_file = files
             .iter()
             .find(|f| {
-                if req_gv.is_empty() || req_gv == "all" {
-                    return true;
-                }
-                f.get("gameVersions")
+                let tags: Vec<&str> = f
+                    .get("gameVersions")
                     .and_then(|gv| gv.as_array())
-                    .map_or(false, |arr| {
-                        arr.iter()
-                            .any(|item| item.as_str().map_or(false, |g| g == req_gv))
-                    })
+                    .map(|arr| arr.iter().filter_map(|item| item.as_str()).collect())
+                    .unwrap_or_default();
+                let version_matches = req_gv.is_empty()
+                    || req_gv == "all"
+                    || tags.iter().any(|tag| *tag == req_gv);
+                // Files tag their loaders in `gameVersions`; skip files built for another loader.
+                let advertised_loaders: Vec<String> = tags
+                    .iter()
+                    .map(|tag| tag.to_ascii_lowercase())
+                    .filter(|tag| CURSEFORGE_LOADER_TAGS.contains(&tag.as_str()))
+                    .collect();
+                let loader_matches = req_loader.is_empty()
+                    || req_loader == "vanilla"
+                    || advertised_loaders.is_empty()
+                    || advertised_loaders.iter().any(|tag| *tag == req_loader);
+                version_matches && loader_matches
             })
             .ok_or_else(|| "No compatible file found.".to_string())?;
 
@@ -3652,13 +3993,51 @@ async fn install_curseforge_pack(
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "CurseForge file is missing its name.".to_string())?;
             let safe_name = safe_modpack_relative_path(name)?;
-            let url = file
+            // Many files have a null `downloadUrl`; ask the API for a download link instead.
+            let direct_url = file
                 .get("downloadUrl")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    format!("CurseForge modpack file '{name}' is not available for download.")
-                })?;
-            let bytes = download_modpack_file(client, url).await?;
+                .filter(|url| !url.trim().is_empty())
+                .map(str::to_string);
+            let url = match direct_url {
+                Some(url) => url,
+                None => {
+                    let owning_mod_id = file
+                        .get("modId")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| {
+                            format!("CurseForge modpack file '{name}' is not available for download.")
+                        })?;
+                    let lookup = client
+                        .get(format!(
+                            "https://api.curseforge.com/v1/mods/{owning_mod_id}/files/{file_id}/download-url"
+                        ))
+                        .header("x-api-key", &api_key)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!("Could not resolve a download link for '{name}': {error}")
+                        })?;
+                    if !lookup.status().is_success() {
+                        return Err(format!(
+                            "CurseForge modpack file '{name}' is not available for download (the author may have disabled third-party downloads)."
+                        ));
+                    }
+                    lookup
+                        .json::<serde_json::Value>()
+                        .await
+                        .map_err(|error| {
+                            format!("Invalid download link response for '{name}': {error}")
+                        })?
+                        .get("data")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("CurseForge modpack file '{name}' is not available for download.")
+                        })?
+                        .to_string()
+                }
+            };
+            let bytes = download_modpack_file(client, &url).await?;
             total_bytes = total_bytes.saturating_add(bytes.len() as u64);
             if total_bytes > 2 * 1024 * 1024 * 1024 {
                 return Err("Modpack files exceed the 2 GiB install limit.".to_string());
@@ -4143,6 +4522,34 @@ fn parse_oauth_callback(request: &str) -> Result<String, String> {
         .ok_or_else(|| "Could not extract authorization code from Microsoft redirect.".to_string())
 }
 
+/// Returns the `state` query parameter of an OAuth callback request line, if present.
+fn oauth_callback_state(request: &str) -> Option<String> {
+    let target = request.lines().next()?.split_whitespace().nth(1)?;
+    let url = reqwest::Url::parse(&format!("http://localhost{target}")).ok()?;
+    let state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.to_string());
+    state
+}
+
+fn is_oauth_callback_request(request: &str) -> bool {
+    request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .is_some_and(|target| target == "/callback" || target.starts_with("/callback?"))
+}
+
+async fn write_loopback_response(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.flush().await;
+}
+
 /// Opens Microsoft OAuth and accepts localhost callbacks on either loopback address family.
 #[tauri::command]
 async fn login_with_microsoft_loopback(
@@ -4176,6 +4583,7 @@ async fn login_with_microsoft_loopback(
     hasher.update(code_verifier.as_bytes());
     let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
 
+    let oauth_state = Uuid::new_v4().simple().to_string();
     let redirect_uri = format!("http://localhost:{bound_port}/callback");
     let mut auth_url =
         reqwest::Url::parse("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize")
@@ -4189,6 +4597,7 @@ async fn login_with_microsoft_loopback(
         .append_pair("scope", MICROSOFT_AUTH_SCOPES)
         .append_pair("code_challenge", &code_challenge)
         .append_pair("code_challenge_method", "S256")
+        .append_pair("state", &oauth_state)
         .append_pair("prompt", "select_account");
     let auth_url = auth_url.to_string();
 
@@ -4209,30 +4618,52 @@ async fn login_with_microsoft_loopback(
     browser_result
         .map_err(|error| format!("Could not open Microsoft sign-in in a browser: {error}"))?;
 
-    // Wait for the browser redirect to localhost callback (3 minutes timeout)
-    let accepted = tokio::time::timeout(Duration::from_secs(180), async {
-        if let Some(listener_v6) = ipv6_listener.as_ref() {
-            tokio::select! {
-                result = listener.accept() => result,
-                result = listener_v6.accept() => result,
+    // Wait for the browser redirect to localhost callback (3 minutes timeout). Browsers often
+    // open speculative empty connections or request /favicon.ico first, so keep accepting until
+    // the real callback (with the matching `state`) arrives.
+    let (auth_code, mut stream) = tokio::time::timeout(Duration::from_secs(180), async {
+        loop {
+            let accepted = if let Some(listener_v6) = ipv6_listener.as_ref() {
+                tokio::select! {
+                    result = listener.accept() => result,
+                    result = listener_v6.accept() => result,
+                }
+            } else {
+                listener.accept().await
+            };
+            let (mut candidate, _) = accepted
+                .map_err(|e| format!("Failed to accept incoming loopback connection: {e}"))?;
+
+            let mut buffer = [0u8; 8192];
+            let bytes_read =
+                match tokio::time::timeout(Duration::from_secs(5), candidate.read(&mut buffer))
+                    .await
+                {
+                    Ok(Ok(count)) if count > 0 => count,
+                    _ => continue,
+                };
+            let request_str = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+
+            if !is_oauth_callback_request(&request_str) {
+                write_loopback_response(&mut candidate, "404 Not Found", "Not found").await;
+                continue;
             }
-        } else {
-            listener.accept().await
+            if oauth_callback_state(&request_str).as_deref() != Some(oauth_state.as_str()) {
+                write_loopback_response(&mut candidate, "400 Bad Request", "Invalid sign-in state")
+                    .await;
+                continue;
+            }
+            match parse_oauth_callback(&request_str) {
+                Ok(code) => return Ok::<(String, tokio::net::TcpStream), String>((code, candidate)),
+                Err(error) => {
+                    write_loopback_response(&mut candidate, "400 Bad Request", &error).await;
+                    return Err(error);
+                }
+            }
         }
     })
     .await
-    .map_err(|_| "Microsoft sign-in timed out after 3 minutes. Please try again.")?
-    .map_err(|e| format!("Failed to accept incoming loopback connection: {e}"))?;
-    let (mut stream, _) = accepted;
-
-    let mut buffer = [0u8; 4096];
-    let bytes_read = stream
-        .read(&mut buffer)
-        .await
-        .map_err(|e| format!("Failed to read OAuth response: {e}"))?;
-    let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
-
-    let auth_code = parse_oauth_callback(&request_str)?;
+    .map_err(|_| "Microsoft sign-in timed out after 3 minutes. Please try again.".to_string())??;
 
     // Respond to user's browser with a styled confirmation page
     let html_body = r#"<!DOCTYPE html>
@@ -5006,6 +5437,52 @@ mod updater_tests {
 }
 
 #[cfg(test)]
+mod instance_world_tests {
+    use super::{delete_instance_world, list_instance_worlds};
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn test_directory() -> PathBuf {
+        std::env::temp_dir().join(format!("the-boys-worlds-{}", Uuid::new_v4().simple()))
+    }
+
+    #[test]
+    fn lists_world_folders_and_deletes_the_selected_save() {
+        let game_dir = test_directory();
+        let world_dir = game_dir.join("saves").join("My World");
+        fs::create_dir_all(&world_dir).unwrap();
+        fs::write(world_dir.join("level.dat"), b"level data").unwrap();
+        fs::create_dir_all(game_dir.join("saves").join("Other World")).unwrap();
+
+        let worlds = list_instance_worlds(
+            "inst_test".to_string(),
+            Some(game_dir.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert_eq!(worlds.len(), 2);
+        assert!(worlds.iter().any(|world| world.folder_name == "My World"));
+        assert!(worlds.iter().all(|world| world.game_mode == "unknown"));
+
+        assert!(delete_instance_world(
+            "inst_test".to_string(),
+            "My World".to_string(),
+            Some(game_dir.to_string_lossy().into_owned()),
+        )
+        .unwrap());
+        assert!(!world_dir.exists());
+        assert!(delete_instance_world(
+            "inst_test".to_string(),
+            "..".to_string(),
+            Some(game_dir.to_string_lossy().into_owned()),
+        )
+        .is_err());
+
+        fs::remove_dir_all(game_dir).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod import_tests {
     use super::*;
 
@@ -5129,6 +5606,57 @@ mod import_tests {
             )
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_external_game_directory_from_launcher_profile() {
+        let directory = test_directory("external-profile");
+        let game_directory = test_directory("external-game-dir");
+        fs::create_dir_all(game_directory.join("saves")).unwrap();
+        let profile = serde_json::json!({
+            "profiles": {
+                "custom": {
+                    "lastVersionId": "1.20.1-forge-47.2.0",
+                    "gameDir": game_directory.to_string_lossy()
+                }
+            }
+        });
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("launcher_profiles.json"),
+            serde_json::to_vec(&profile).unwrap(),
+        )
+        .unwrap();
+
+        let (game_dir, metadata_dir) = resolve_import_directories(&directory).unwrap();
+        assert_eq!(game_dir, game_directory.canonicalize().unwrap());
+        assert_eq!(metadata_dir, directory.canonicalize().unwrap());
+        assert_eq!(
+            detect_import_metadata(&metadata_dir).unwrap(),
+            (
+                "1.20.1".to_string(),
+                "forge".to_string(),
+                Some("47.2.0".to_string())
+            )
+        );
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(game_directory).unwrap();
+    }
+
+    #[test]
+    fn parses_forge_profile_ids_without_treating_minecraft_version_as_loader_version() {
+        assert_eq!(
+            loader_from_identifier("forge-1.20.1-47.2.0"),
+            ("forge".to_string(), Some("47.2.0".to_string()))
+        );
+        assert_eq!(
+            loader_from_identifier("1.20.1-forge-47.2.0"),
+            ("forge".to_string(), Some("47.2.0".to_string()))
+        );
+        assert_eq!(
+            loader_from_identifier("forge-14.23.5.2860"),
+            ("forge".to_string(), Some("14.23.5.2860".to_string()))
+        );
     }
 
     #[test]
@@ -5257,6 +5785,44 @@ mod import_tests {
         fs::remove_dir_all(source).unwrap();
         fs::remove_dir_all(target).unwrap();
     }
+
+    #[test]
+    fn clones_instance_data_and_updates_instance_identity() {
+        let source = test_directory("clone-source");
+        let target = test_directory("clone-target");
+        fs::create_dir_all(source.join("saves").join("World")).unwrap();
+        fs::write(
+            source.join("instance.json"),
+            serde_json::to_vec(&InstanceMetadata {
+                id: "original".to_string(),
+                name: "Original".to_string(),
+                game_version: "1.21.1".to_string(),
+                loader: "fabric".to_string(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            source.join("saves").join("World").join("level.dat"),
+            b"world",
+        )
+        .unwrap();
+
+        clone_instance_directory(&source, &target, "cloned", "Cloned Instance").unwrap();
+
+        let metadata: InstanceMetadata =
+            serde_json::from_slice(&fs::read(target.join("instance.json")).unwrap()).unwrap();
+        assert_eq!(metadata.id, "cloned");
+        assert_eq!(metadata.name, "Cloned Instance");
+        assert_eq!(metadata.game_version, "1.21.1");
+        assert_eq!(metadata.loader, "fabric");
+        assert_eq!(
+            fs::read(target.join("saves").join("World").join("level.dat")).unwrap(),
+            b"world"
+        );
+        fs::remove_dir_all(source).unwrap();
+        fs::remove_dir_all(target).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -5374,6 +5940,8 @@ pub fn run() {
             create_desktop_shortcut,
             get_startup_instance_id,
             list_instances,
+            list_instance_worlds,
+            delete_instance_world,
             create_instance,
             rename_instance_folder,
             open_instance_folder,

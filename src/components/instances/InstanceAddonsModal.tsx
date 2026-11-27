@@ -140,8 +140,11 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
   }, [searchQuery, category, provider, sortBy, filterStrictVersion]);
 
   // Fetch Addons with 20 items per page
+  const fetchRequestIdRef = useRef(0);
   const fetchPage = useCallback(async () => {
     if (!isOpen) return;
+    const requestId = ++fetchRequestIdRef.current;
+    const isStale = () => requestId !== fetchRequestIdRef.current;
     setIsLoading(true);
     setError(null);
 
@@ -166,6 +169,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         };
 
         const data = await searchModrinth(options);
+        if (isStale()) return;
         const mapped: UnifiedModalItem[] = (data.hits || []).map((hit: ModrinthSearchResult) => ({
           id: hit.project_id,
           name: hit.title,
@@ -201,6 +205,7 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
           pageSize: PAGE_SIZE,
         });
 
+        if (isStale()) return;
         const cfItems = Array.isArray(cfData.data) ? cfData.data : [];
         const mapped: UnifiedModalItem[] = cfItems.map((item: CurseForgeSearchResult) => {
           const itemType =
@@ -233,11 +238,12 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         setTotalHits(total);
       }
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err.message : 'Failed to search addons.');
       setItems([]);
       setTotalHits(0);
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, [
     isOpen,
@@ -353,7 +359,10 @@ export const InstanceAddonsModal: React.FC<InstanceAddonsModalProps> = ({
         };
         onUpdateInstance({
           ...instance,
-          mods: [...instance.mods, newMod],
+          mods: [
+            ...instance.mods.filter((mod) => mod.id !== newMod.id && mod.filename !== newMod.filename),
+            newMod,
+          ],
         });
       }
 
